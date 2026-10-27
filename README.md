@@ -1,6 +1,6 @@
 # taoBarcode – Tạo mã vạch thẻ lên máy bay
 
-Trang web tạo mã vạch thẻ lên máy bay (boarding pass) theo chuẩn IATA BCBP, hỗ trợ mã **Aztec** và **PDF417**.
+Trang web tạo mã vạch thẻ lên máy bay (boarding pass) theo chuẩn IATA BCBP, dạng mã **PDF417**.
 Toàn bộ chạy trong trình duyệt, không cần server.
 
 Dự án được phát triển tiếp từ [shooshx/BoardingBarcode](https://github.com/shooshx/BoardingBarcode).
@@ -44,10 +44,10 @@ M1DOE/JOHN            EXYZ123 ZRHSFOBA 1234 301Y035A0001 100
 | 58 | 1 | Trạng thái hành khách | |
 | 59–60 | 2 | Độ dài dữ liệu bổ sung | số hex; dữ liệu bổ sung (nếu có) nằm sau vị trí 60 |
 
-## Biên dịch lại thư viện mã vạch
+## Mã nguồn
 
-Phần tạo mã vạch (`js_qr_brd.js`) được biên dịch từ mã C trong thư mục `src/` (dựa trên [zint](https://github.com/zint/zint)) bằng Emscripten.
-Xem lệnh trong `em_rel_build.bat`.
+Bộ tạo mã PDF417 (`pdf417.js`) viết bằng JavaScript thuần, chuyển từ mã C của [zint](https://github.com/zint/zint), nên mã tạo ra giống hệt zint.
+Vì vậy riêng file `pdf417.js` theo giấy phép GPL v3 của zint (xem đầu file); phần còn lại theo giấy phép MIT trong `LICENSE`.
 
 ## Lưu ý
 
@@ -57,6 +57,6 @@ Công cụ chỉ dùng cho mục đích học tập và tìm hiểu. Bạn tự 
 
 - Chuẩn BCBP: http://www.iata.org/whatwedo/stb/documents/bcbp_implementation_guidev4_jun2009.pdf
 - Giải thích dữ liệu trong mã vạch thẻ lên máy bay: https://shaun.net/whats-contained-in-a-boarding-pass-barcode/
-- Mã Aztec: https://en.wikipedia.org/wiki/Aztec_Code
+- Mã PDF417: https://en.wikipedia.org/wiki/PDF417
 - Mã hãng bay: http://www.airlineandairportlinks.com/frameset_linecode.html
 - Mã sân bay IATA: http://www.airportcodes.org/

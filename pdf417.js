@@ -1,24 +1,45 @@
-// Fixed-size truncated PDF417 encoder.
-// Used for templates whose symbol shape must not depend on the data length,
-// e.g. Vietjet boarding passes: always 8 data columns x 8 rows, ECC level 2,
-// text compaction, padded with 900 codewords, truncated (no right row indicator / stop pattern).
-// Rendering follows zint (src/pdf417.c) so the output looks the same as the other templates.
+/*  Port of pdf417.c from Zint - A barcode generating program using libpng
+    Copyright (C) 2008 Robin Stuart <robin@zint.org.uk>
+    Portions Copyright (C) 2004 Grandzebu
+    Bug Fixes thanks to KL Chin <klchin@users.sourceforge.net>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details: <https://www.gnu.org/licenses/>.
+*/
+
+// PDF417 encoder, a JavaScript port of the PDF417 part of the zint version this page used to
+// bundle (pdf417.c), so the symbols are the same as the ones that zint/emscripten build produced:
+// - text and byte compaction (this zint build never selects numeric compaction),
+// - rows computed from the number of data columns, padded with 900 codewords like zint,
+// - optional truncated PDF417 (no right row indicator / stop pattern) and fixed row count,
+//   used by the PDF417-VJ template (Vietjet: 8 columns x 8 rows, ECC level 2, truncated).
+// Rendering matches zint's SVG: 10 px per module, rows 3 modules high, no quiet zone.
 "use strict"
 
-var Pdf417Fixed = (function() {
+var Pdf417 = (function() {
 
-// codagemc from src/pdf417.c: 3 clusters x 929 codewords, 3 chars per codeword, 5 bits per char
+// codagemc from zint pdf417.c: 3 clusters x 929 codewords, 3 chars per codeword, 5 bits per char
 var PATTERNS = "urAxfsypyunkxdwyozpDAulspBkeBApAseAkprAuvsxhypnkutwxgzfDAplsfBkfrApvsuxyfnkptwuwzflspsyfvspxyftwpwzfxyyrxufkxFwymzonAudsxEyolkucwdBAoksucidAkokgdAcovkuhwxazdnAotsugydlkoswugjdksosidvkoxwuizdtsowydswowjdxwoyzdwydwjofAuFsxCyodkuEwxCjclAocsuEickkocgckcckEcvAohsuayctkogwuajcssogicsgcsacxsoiycwwoijcwicyyoFkuCwxBjcdAoEsuCicckoEguCbcccoEaccEoEDchkoawuDjcgsoaicggoabcgacgDobjcibcFAoCsuBicEkoCguBbcEcoCacEEoCDcECcascagcaacCkuAroBaoBDcCBtfkwpwyezmnAtdswoymlktcwwojFBAmksFAkmvkthwwqzFnAmtstgyFlkmswFksFkgFvkmxwtizFtsmwyFswFsiFxwmyzFwyFyzvfAxpsyuyvdkxowyujqlAvcsxoiqkkvcgxobqkcvcamfAtFswmyqvAmdktEwwmjqtkvgwxqjhlAEkkmcgtEbhkkqsghkcEvAmhstayhvAEtkmgwtajhtkqwwvijhssEsghsgExsmiyhxsEwwmijhwwqyjhwiEyyhyyEyjhyjvFkxmwytjqdAvEsxmiqckvEgxmbqccvEaqcEqcCmFktCwwljqhkmEstCigtAEckvaitCbgskEccmEagscqgamEDEcCEhkmawtDjgxkEgsmaigwsqiimabgwgEgaEgDEiwmbjgywEiigyiEibgybgzjqFAvCsxliqEkvCgxlbqEcvCaqEEvCDqECqEBEFAmCstBighAEEkmCgtBbggkqagvDbggcEEEmCDggEqaDggCEasmDigisEagmDbgigqbbgiaEaDgiDgjigjbqCkvBgxkrqCcvBaqCEvBDqCCqCBECkmBgtArgakECcmBagacqDamBDgaEECCgaCECBEDggbggbagbDvAqvAnqBBmAqEBEgDEgDCgDBlfAspsweyldksowClAlcssoiCkklcgCkcCkECvAlhssqyCtklgwsqjCsslgiCsgCsaCxsliyCwwlijCwiCyyCyjtpkwuwyhjndAtoswuincktogwubncctoancEtoDlFksmwwdjnhklEssmiatACcktqismbaskngglEaascCcEasEChklawsnjaxkCgstrjawsniilabawgCgaawaCiwlbjaywCiiayiCibCjjazjvpAxusyxivokxugyxbvocxuavoExuDvoCnFAtmswtirhAnEkxviwtbrgkvqgxvbrgcnEEtmDrgEvqDnEBCFAlCssliahACEklCgslbixAagknagtnbiwkrigvrblCDiwcagEnaDiwECEBCaslDiaisCaglDbiysaignbbiygrjbCaDaiDCbiajiCbbiziajbvmkxtgywrvmcxtavmExtDvmCvmBnCktlgwsrraknCcxtrracvnatlDraEnCCraCnCBraBCCklBgskraakCCclBaiikaacnDalBDiicrbaCCCiiEaaCCCBaaBCDglBrabgCDaijgabaCDDijaabDCDrijrvlcxsqvlExsnvlCvlBnBctkqrDcnBEtknrDEvlnrDCnBBrDBCBclAqaDcCBElAnibcaDEnBnibErDnCBBibCaDBibBaDqibqibnxsfvkltkfnAmnAlCAoaBoiDoCAlaBlkpkBdAkosBckkogsebBcckoaBcEkoDBhkkqwsfjBgskqiBggkqbBgaBgDBiwkrjBiiBibBjjlpAsuswhiloksuglocsualoEsuDloCBFAkmssdiDhABEksvisdbDgklqgsvbDgcBEEkmDDgElqDBEBBaskniDisBagknbDiglrbDiaBaDBbiDjiBbbDjbtukwxgyirtucwxatuEwxDtuCtuBlmkstgnqklmcstanqctvastDnqElmCnqClmBnqBBCkklgDakBCcstrbikDaclnaklDbicnraBCCbiEDaCBCBDaBBDgklrDbgBDabjgDbaBDDbjaDbDBDrDbrbjrxxcyyqxxEyynxxCxxBttcwwqvvcxxqwwnvvExxnvvCttBvvBllcssqnncllEssnrrcnnEttnrrEvvnllBrrCnnBrrBBBckkqDDcBBEkknbbcDDEllnjjcbbEnnnBBBjjErrnDDBjjCBBqDDqBBnbbqDDnjjqbbnjjnxwoyyfxwmxwltsowwfvtoxwvvtmtslvtllkossfnlolkmrnonlmlklrnmnllrnlBAokkfDBolkvbDoDBmBAljbobDmDBljbmbDljblDBvjbvxwdvsuvstnkurlurltDAubBujDujDtApAAokkegAocAoEAoCAqsAqgAqaAqDAriArbkukkucshakuEshDkuCkuBAmkkdgBqkkvgkdaBqckvaBqEkvDBqCAmBBqBAngkdrBrgkvrBraAnDBrDAnrBrrsxcsxEsxCsxBktclvcsxqsgnlvEsxnlvCktBlvBAlcBncAlEkcnDrcBnEAlCDrEBnCAlBDrCBnBAlqBnqAlnDrqBnnDrnwyowymwylswotxowyvtxmswltxlksosgfltoswvnvoltmkslnvmltlnvlAkokcfBloksvDnoBlmAklbroDnmBllbrmDnlAkvBlvDnvbrvyzeyzdwyexyuwydxytswetwuswdvxutwtvxtkselsuksdntulstrvuypkzewxdAyoszeixckyogzebxccyoaxcEyoDxcCxhkyqwzfjutAxgsyqiuskxggyqbuscxgausExgDusCuxkxiwyrjptAuwsxiipskuwgxibpscuwapsEuwDpsCpxkuywxjjftApwsuyifskpwguybfscpwafsEpwDfxkpywuzjfwspyifwgpybfwafywpzjfyifybxFAymszdixEkymgzdbxEcymaxEEymDxECxEBuhAxasyniugkxagynbugcxaaugExaDugCugBoxAuisxbiowkuigxbbowcuiaowEuiDowCowBdxAoysujidwkoygujbdwcoyadwEoyDdwCdysozidygozbdyadyDdzidzbxCkylgzcrxCcylaxCEylDxCCxCBuakxDgylruacxDauaExDDuaCuaBoikubgxDroicubaoiEubDoiCoiBcykojgubrcycojacyEojDcyCcyBczgojrczaczDczrxBcykqxBEyknxBCxBBuDcxBquDExBnuDCuDBobcuDqobEuDnobCobBcjcobqcjEobncjCcjBcjqcjnxAoykfxAmxAluBoxAvuBmuBloDouBvoDmoDlcbooDvcbmcblxAexAduAuuAtoBuoBtwpAyeszFiwokyegzFbwocyeawoEyeDwoCwoBthAwqsyfitgkwqgyfbtgcwqatgEwqDtgCtgBmxAtiswrimwktigwrbmwctiamwEtiDmwCmwBFxAmystjiFwkmygtjbFwcmyaFwEmyDFwCFysmziFygmzbFyaFyDFziFzbyukzhghjsyuczhahbwyuEzhDhDyyuCyuBwmkydgzErxqkwmczhrxqcyvaydDxqEwmCxqCwmBxqBtakwngydrviktacwnavicxrawnDviEtaCviCtaBviBmiktbgwnrqykmictbaqycvjatbDqyEmiCqyCmiBqyBEykmjgtbrhykEycmjahycqzamjDhyEEyChyCEyBEzgmjrhzgEzahzaEzDhzDEzrytczgqgrwytEzgngnyytCglzytBwlcycqxncwlEycnxnEytnxnCwlBxnBtDcwlqvbctDEwlnvbExnnvbCtDBvbBmbctDqqjcmbEtDnqjEvbnqjCmbBqjBEjcmbqgzcEjEmbngzEqjngzCEjBgzBEjqgzqEjngznysozgfgfyysmgdzyslwkoycfxloysvxlmwklxlltBowkvvDotBmvDmtBlvDlmDotBvqbovDvqbmmDlqblEbomDvgjoEbmgjmEblgjlEbvgjvysegFzysdwkexkuwkdxkttAuvButAtvBtmBuqDumBtqDtEDugbuEDtgbtysFwkFxkhtAhvAxmAxqBxwekyFgzCrwecyFaweEyFDweCweBsqkwfgyFrsqcwfasqEwfDsqCsqBliksrgwfrlicsraliEsrDliCliBCykljgsrrCycljaCyEljDCyCCyBCzgljrCzaCzDCzryhczaqarwyhEzananyyhCalzyhBwdcyEqwvcwdEyEnwvEyhnwvCwdBwvBsncwdqtrcsnEwdntrEwvntrCsnBtrBlbcsnqnjclbEsnnnjEtrnnjClbBnjBCjclbqazcCjElbnazEnjnazCCjBazBCjqazqCjnaznzioirsrfyziminwrdzzililyikzygozafafyyxozivivyadzyxmyglitzyxlwcoyEfwtowcmxvoyxvwclxvmwtlxvlslowcvtnoslmvrotnmsllvrmtnlvrllDoslvnbolDmrjonbmlDlrjmnblrjlCbolDvajoCbmizoajmCblizmajlizlCbvajvzieifwrFzzididyiczygeaFzywuygdihzywtwcewsuwcdxtuwstxttskutlusktvnutltvntlBunDulBtrbunDtrbtCDuabuCDtijuabtijtziFiFyiEzygFywhwcFwshxsxskhtkxvlxlAxnBxrDxCBxaDxibxiCzwFcyCqwFEyCnwFCwFBsfcwFqsfEwFnsfCsfBkrcsfqkrEsfnkrCkrBBjckrqBjEkrnBjCBjBBjqBjnyaozDfDfyyamDdzyalwEoyCfwhowEmwhmwElwhlsdowEvsvosdmsvmsdlsvlknosdvlroknmlrmknllrlBboknvDjoBbmDjmBblDjlBbvDjvzbebfwnpzzbdbdybczyaeDFzyiuyadbhzyitwEewguwEdwxuwgtwxtscustuscttvustttvtklulnukltnrulntnrtBDuDbuBDtbjuDbtbjtjfsrpyjdwrozjcyjcjzbFbFyzjhjhybEzjgzyaFyihyyxwEFwghwwxxxxschssxttxvvxkkxllxnnxrrxBBxDDxbbxjFwrmzjEyjEjbCzjazjCyjCjjBjwCowCmwClsFowCvsFmsFlkfosFvkfmkflArokfvArmArlArvyDeBpzyDdwCewauwCdwatsEushusEtshtkdukvukdtkvtAnuBruAntBrtzDpDpyDozyDFybhwCFwahwixsEhsgxsxxkcxktxlvxAlxBnxDrxbpwnuzboybojDmzbqzjpsruyjowrujjoijobbmyjqybmjjqjjmwrtjjmijmbbljjnjjlijlbjkrsCusCtkFukFtAfuAftwDhsChsaxkExkhxAdxAvxBuzDuyDujbuwnxjbuibubDtjbvjjusrxijugrxbjuajuDbtijvibtbjvbjtgrwrjtajtDbsrjtrjsqjsnBxjDxiDxbbxgnyrbxabxDDwrbxrbwqbwnpjkurwejApbsunyebkpDwulzeDspByeBwzfcfjkprwzfEfbspnyzfCfDwplzzfBfByyrczfqfrwyrEzfnfnyyrCflzyrBxjcyrqxjEyrnxjCxjBuzcxjquzExjnuzCuzBpzcuzqpzEuznpzCdjAorsufydbkonwudzdDsolydBwokzdAyzdodrsovyzdmdnwotzzdldlydkzynozdvdvyynmdtzynlxboynvxbmxblujoxbvujmujlozoujvozmozlcrkofwuFzcnsodyclwoczckyckjzcucvwohzzctctycszylucxzyltxDuxDtubuubtojuojtcfsoFycdwoEzccyccjzchchycgzykxxBxuDxcFwoCzcEycEjcazcCycCjFjAmrstfyFbkmnwtdzFDsmlyFBwmkzFAyzFoFrsmvyzFmFnwmtzzFlFlyFkzyfozFvFvyyfmFtzyflwroyfvwrmwrltjowrvtjmtjlmzotjvmzmmzlqrkvfwxpzhbAqnsvdyhDkqlwvczhBsqkyhAwqkjhAiErkmfwtFzhrkEnsmdyhnsqtymczhlwEkyhkyEkjhkjzEuEvwmhzzhuzEthvwEtyzhthtyEszhszyduExzyvuydthxzyvtwnuxruwntxrttbuvjutbtvjtmjumjtgrAqfsvFygnkqdwvEzglsqcygkwqcjgkigkbEfsmFygvsEdwmEzgtwqgzgsyEcjgsjzEhEhyzgxgxyEgzgwzycxytxwlxxnxtDxvbxmbxgfkqFwvCzgdsqEygcwqEjgcigcbEFwmCzghwEEyggyEEjggjEazgizgFsqCygEwqCjgEigEbECygayECjgajgCwqBjgCigCbEBjgDjgBigBbCrklfwspzCnsldyClwlczCkyCkjzCuCvwlhzzCtCtyCszyFuCxzyFtwfuwftsrusrtljuljtarAnfstpyankndwtozalsncyakwncjakiakbCfslFyavsCdwlEzatwngzasyCcjasjzChChyzaxaxyCgzawzyExyhxwdxwvxsnxtrxlbxrfkvpwxuzinArdsvoyilkrcwvojiksrciikgrcbikaafknFwtmzivkadsnEyitsrgynEjiswaciisiacbisbCFwlCzahwCEyixwagyCEjiwyagjiwjCazaiziyzifArFsvmyidkrEwvmjicsrEiicgrEbicaicDaFsnCyihsaEwnCjigwrajigiaEbigbCCyaayCCjiiyaajiijiFkrCwvljiEsrCiiEgrCbiEaiEDaCwnBjiawaCiiaiaCbiabCBjaDjibjiCsrBiiCgrBbiCaiCDaBiiDiaBbiDbiBgrAriBaiBDaAriBriAqiAnBfskpyBdwkozBcyBcjBhyBgzyCxwFxsfxkrxDfklpwsuzDdsloyDcwlojDciDcbBFwkmzDhwBEyDgyBEjDgjBazDizbfAnpstuybdknowtujbcsnoibcgnobbcabcDDFslmybhsDEwlmjbgwDEibgiDEbbgbBCyDayBCjbiyDajbijrpkvuwxxjjdArosvuijckrogvubjccroajcEroDjcCbFknmwttjjhkbEsnmijgsrqinmbjggbEajgabEDjgDDCwlljbawDCijiwbaiDCbjiibabjibBBjDDjbbjjjjjFArmsvtijEkrmgvtbjEcrmajEErmDjECjEBbCsnlijasbCgnlbjagrnbjaabCDjaDDBibDiDBbjbibDbjbbjCkrlgvsrjCcrlajCErlDjCCjCBbBgnkrjDgbBajDabBDjDDDArbBrjDrjBcrkqjBErknjBCjBBbAqjBqbAnjBnjAorkfjAmjAlbAfjAvApwkezAoyAojAqzBpskuyBowkujBoiBobAmyBqyAmjBqjDpkluwsxjDosluiDoglubDoaDoDBmwktjDqwBmiDqiBmbDqbAljBnjDrjbpAnustxiboknugtxbbocnuaboEnuDboCboBDmsltibqsDmgltbbqgnvbbqaDmDbqDBliDniBlbbriDnbbrbrukvxgxyrrucvxaruEvxDruCruBbmkntgtwrjqkbmcntajqcrvantDjqEbmCjqCbmBjqBDlglsrbngDlajrgbnaDlDjrabnDjrDBkrDlrbnrjrrrtcvwqrtEvwnrtCrtBblcnsqjncblEnsnjnErtnjnCblBjnBDkqblqDknjnqblnjnnrsovwfrsmrslbkonsfjlobkmjlmbkljllDkfbkvjlvrsersdbkejkubkdjktAeyAejAuwkhjAuiAubAdjAvjBuskxiBugkxbBuaBuDAtiBviAtbBvbDuklxgsyrDuclxaDuElxDDuCDuBBtgkwrDvglxrDvaBtDDvDAsrBtrDvrnxctyqnxEtynnxCnxBDtclwqbvcnxqlwnbvEDtCbvCDtBbvBBsqDtqBsnbvqDtnbvnvyoxzfvymvylnwotyfrxonwmrxmnwlrxlDsolwfbtoDsmjvobtmDsljvmbtljvlBsfDsvbtvjvvvyevydnwerwunwdrwtDsebsuDsdjtubstjttvyFnwFrwhDsFbshjsxAhiAhbAxgkirAxaAxDAgrAxrBxckyqBxEkynBxCBxBAwqBxqAwnBxnlyoszflymlylBwokyfDxolyvDxmBwlDxlAwfBwvDxvtzetzdlyenyulydnytBweDwuBwdbxuDwtbxttzFlyFnyhBwFDwhbwxAiqAinAyokjfAymAylAifAyvkzekzdAyeByuAydBytszp"
+
 var PATTERN_CHARS = "ABCDEFabcdefghijklmnopqrstuvwxyz"
 var START = "1111111101010100" + "01"
+var STOP = "11111101000101001"
 var SEPARATOR = "01"
-var MODULE_PX = 10   // same as my_symbol->scale in main.cpp
+var MODULE_PX = 10   // the scale the old zint build used
 var ROW_MODULES = 3
 
-var LATCH_TEXT = 900, PAD = 900
+var TEX = 900, BYT = 901
+var LATCH_TEXT = 900, PAD = 900, LATCH_BYTE = 901, LATCH_BYTE6 = 924, SHIFT_BYTE = 913
 
-// Text compaction, ported from textprocess() in src/pdf417.c so the codewords are the
-// same as zint's (and as Vietjet's own boarding passes).
+// ---------------- text compaction (textprocess) ----------------
+
 // Sub-mode tables: 1 upper, 2 lower, 4 mixed, 8 punctuation. ASCII_TABLES is a bit mask of
 // the tables each character (32..126) belongs to, ASCII_VALUES its value in those tables.
 var ASCII_TABLES = [7, 8, 8, 4, 12, 4, 4, 8, 8, 8, 12, 4, 12, 12, 12, 12, 4, 4, 4, 4, 4, 4, 4, 4,
@@ -37,20 +58,15 @@ var SWITCH = {
     8: { 1: [29], 2: [29, 27], 4: [29, 28] }
 }
 
-function charTables(s, i) {
-    var c = s.charCodeAt(i)
+function charTables(c) {
     if (c == 9) return [12, 12]
     if (c == 10) return [8, 15]
     if (c == 13) return [12, 11]
-    if (c < 32 || c > 126)
-        throw new Error('Ký tự "' + s.charAt(i) + '" (vị trí ' + (i + 1) + ') không mã hóa được trong mẫu này')
     return [ASCII_TABLES[c - 32], ASCII_VALUES[c - 32]]
 }
 
-function textCompaction(s) {
-    var list = [], v = [], cur = 1
-    for (var i = 0; i < s.length; i++)
-        list.push(charTables(s, i))
+function textProcess(bytes, out) {
+    var list = bytes.map(charTables), v = [], cur = 1
     for (var j = 0; j < list.length; j++) {
         var t = list[j][0], val = list[j][1]
         if (t & cur) {
@@ -72,11 +88,89 @@ function textCompaction(s) {
     }
     if (v.length % 2)
         v.push(29)
-    var cw = []
+    out.push(LATCH_TEXT)
     for (var k = 0; k < v.length; k += 2)
-        cw.push(v[k] * 30 + v[k + 1])
-    return cw
+        out.push(v[k] * 30 + v[k + 1])
 }
+
+// ---------------- byte compaction (byteprocess) ----------------
+
+function byteProcess(bytes, out) {
+    if (bytes.length == 1) {
+        out.push(SHIFT_BYTE, bytes[0])
+        return
+    }
+    out.push(bytes.length % 6 == 0 ? LATCH_BYTE6 : LATCH_BYTE)
+    var i = 0
+    for (; i + 6 <= bytes.length; i += 6) {
+        var total = 0  // 48 bits, exact in a double
+        for (var j = 0; j < 6; j++)
+            total = total * 256 + bytes[i + j]
+        var cw = []
+        for (var j = 0; j < 5; j++) {
+            cw.unshift(total % 900)
+            total = Math.floor(total / 900)
+        }
+        out.push.apply(out, cw)
+    }
+    for (; i < bytes.length; i++)
+        out.push(bytes[i])
+}
+
+// ---------------- mode blocks (quelmode, pdfsmooth, regroupe) ----------------
+
+function quelmode(c) {
+    return (c == 9 || c == 10 || c == 13 || (c >= 32 && c <= 126)) ? TEX : BYT
+}
+
+function regroupe(list) {
+    for (var i = 1; i < list.length; i++)
+        if (list[i - 1].mode == list[i].mode) {
+            list[i - 1].len += list[i].len
+            list.splice(i, 1)
+            i--
+        }
+}
+
+function blocks(bytes) {
+    var list = []
+    bytes.forEach(function(c) {
+        var m = quelmode(c)
+        if (list.length && list[list.length - 1].mode == m)
+            list[list.length - 1].len++
+        else
+            list.push({ mode: m, len: 1 })
+    })
+    // pdfsmooth: short text blocks between byte blocks become bytes
+    // (its rules for numeric blocks never apply: quelmode never returns numeric)
+    regroupe(list)
+    for (var i = 1; i < list.length; i++) {
+        var b = list[i], last = list[i - 1].mode, next = i < list.length - 1 ? list[i + 1].mode : null
+        if (b.mode != TEX)
+            continue
+        if (i == list.length - 1) {
+            if (last == BYT && b.len == 1) b.mode = BYT
+        } else {
+            if (last == BYT && next == BYT && b.len < 5) b.mode = BYT
+            if (((last == BYT && next != BYT) || (last != BYT && next == BYT)) && b.len < 3) b.mode = BYT
+        }
+    }
+    regroupe(list)
+    return list
+}
+
+function dataCodewords(bytes) {
+    var out = [], pos = 0
+    blocks(bytes).forEach(function(b) {
+        var part = bytes.slice(pos, pos + b.len)
+        if (b.mode == TEX) textProcess(part, out)
+        else byteProcess(part, out)
+        pos += b.len
+    })
+    return out
+}
+
+// ---------------- error correction ----------------
 
 // Reed-Solomon over GF(929), generator (x - 3)(x - 3^2)...(x - 3^k)
 function eccCoefficients(k) {
@@ -107,16 +201,54 @@ function eccCodewords(data, level) {
     return out
 }
 
-// all codewords of the symbol: length descriptor, latch, text, padding, ECC
-function codewords(text, cols, rows, level) {
-    var slots = cols * rows - (2 << level)
-    var data = [0, LATCH_TEXT].concat(textCompaction(text))
-    if (data.length > slots)
-        throw new Error("Dữ liệu quá dài cho mẫu này (" + data.length + "/" + slots + " codeword)")
-    while (data.length < slots)
-        data.push(PAD)
-    data[0] = slots
-    return data.concat(eccCodewords(data, level))
+// ---------------- symbol ----------------
+
+function utf8Bytes(s) {
+    var out = [], str = unescape(encodeURIComponent(s))
+    for (var i = 0; i < str.length; i++)
+        out.push(str.charCodeAt(i))
+    return out
+}
+
+// opts: ecc (-1 auto, 0..8), cols (0 auto, 1..30), rows (fixed row count, optional),
+//       truncated (bool). Returns { cols, rows, ecc, codewords } (codewords include ECC).
+function encode(text, opts) {
+    var cw = dataCodewords(utf8Bytes(text))
+    var ecc = opts.ecc, cols = opts.cols
+    if (ecc < -1 || ecc > 8) ecc = -1
+    if (cols < 0 || cols > 30) cols = 0
+    if (ecc < 0) {
+        ecc = 6
+        if (cw.length <= 863) ecc = 5
+        if (cw.length <= 320) ecc = 4
+        if (cw.length <= 160) ecc = 3
+        if (cw.length <= 40) ecc = 2
+    }
+    var k = 2 << ecc
+    if (cols < 1)
+        cols = Math.floor(0.5 + Math.sqrt((cw.length + k) / 3))
+    if (Math.floor((cw.length + k) / cols) > 90)
+        cols++  // stop the symbol from becoming too high
+    if (cw.length + k > 928)
+        throw new Error("Dữ liệu quá dài cho PDF417")
+    if (Math.floor((cw.length + k) / cols) > 90)
+        throw new Error("Dữ liệu quá dài cho số cột đã chọn")
+
+    var len = cw.length + 1 + k, pad = 0
+    if (opts.rows) {
+        if (len > cols * opts.rows)
+            throw new Error("Dữ liệu quá dài cho mẫu này (" + (len - k) + "/" + (cols * opts.rows - k) + " codeword)")
+        pad = cols * opts.rows - len
+    }
+    else if (Math.floor(len / cols) < 3)
+        pad = cols * 3 - len  // at least three rows
+    else if (len % cols)
+        pad = cols - len % cols
+    while (pad-- > 0)
+        cw.push(PAD)
+    cw.unshift(cw.length + 1)  // length descriptor
+    cw = cw.concat(eccCodewords(cw, ecc))
+    return { cols: cols, rows: cw.length / cols, ecc: ecc, codewords: cw }
 }
 
 function codewordBits(cluster, value) {
@@ -126,23 +258,26 @@ function codewordBits(cluster, value) {
     return b + SEPARATOR
 }
 
-function rowBits(cw, cols, rows, level) {
-    var c1 = Math.floor((rows - 1) / 3), c2 = level * 3 + (rows - 1) % 3, c3 = cols - 1
+// module rows, "1" = bar
+function rowBits(sym, truncated) {
+    var cols = sym.cols, rows = sym.rows, cw = sym.codewords
+    var c1 = Math.floor((rows - 1) / 3), c2 = sym.ecc * 3 + (rows - 1) % 3, c3 = cols - 1
     var out = []
     for (var i = 0; i < rows; i++) {
-        var k = Math.floor(i / 3) * 30
-        var left = k + [c1, c2, c3][i % 3]
-        var bits = START + codewordBits(i % 3, left)
+        var k = Math.floor(i / 3) * 30, cl = i % 3
+        var bits = START + codewordBits(cl, k + [c1, c2, c3][cl])
         for (var j = 0; j < cols; j++)
-            bits += codewordBits(i % 3, cw[i * cols + j])
+            bits += codewordBits(cl, cw[i * cols + j])
+        if (!truncated)
+            bits += codewordBits(cl, k + [c3, c1, c2][cl]) + STOP
         out.push(bits)
     }
     return out
 }
 
-function svg(text, cols, rows, level) {
-    var lines = rowBits(codewords(text, cols, rows, level), cols, rows, level)
-    var w = lines[0].length * MODULE_PX, rh = ROW_MODULES * MODULE_PX, h = rows * rh
+function svg(text, opts) {
+    var lines = rowBits(encode(text, opts), opts.truncated)
+    var w = lines[0].length * MODULE_PX, rh = ROW_MODULES * MODULE_PX, h = lines.length * rh
     var s = '<svg width="' + w + '" height="' + h + '" version="1.1" xmlns="http://www.w3.org/2000/svg">\n'
           + '<g id="barcode" fill="#000000">\n'
           + '<rect x="0" y="0" width="' + w + '" height="' + h + '" fill="#FFFFFF" />\n'
@@ -155,5 +290,5 @@ function svg(text, cols, rows, level) {
     return s + '</g>\n</svg>\n'
 }
 
-return { codewords: codewords, rowBits: rowBits, svg: svg }
+return { encode: encode, rowBits: rowBits, svg: svg }
 })()

@@ -1,4 +1,1 @@
-/Debug
-*.sdf
-*.opensdf
-*.suo
+.DS_Store

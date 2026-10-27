@@ -21,19 +21,17 @@ var textOut = null
 var textIn = ""
 var fields = {}
 
-var run, getDayOfYear
+var getDayOfYear
 var ctx = null
     
 function start() 
 {
-    run = Module.cwrap('run', null, ['number', 'string', 'number', 'number'])
-
     ctx = theimg3.getContext('2d')
 
  //   var d = new Date()
  //   var dy = getDayOfYear(d.getDate(), d.getMonth(), d.getFullYear())
   //  dayOfYearEd.value = '' + dy
-    dateEd.value = todayInputValue()
+    dateEd.value = localDateValue(new Date())
     
     formatName()
     formatField('bookRef')
@@ -67,24 +65,23 @@ function update(fromRaw)
         textEdit.value = textIn
     else
         textIn = textEdit.value
-    var ecc =  parseInt(eccSelect.value)
-    var ssize = parseInt(symSize.value)  // if this is 0, ecc is used
+    var ecc = parseInt(eccSelect.value) || 0
+    var ssize = parseInt(symSize.value) || 0  // pdf417 data columns, 0 = automatic
     var ctype = codeTypes[codeTypeSel.value]
-    if (ctype.fixed || ctype.qr) {
-        try {
-            if (ctype.qr)
-                textOut = QrEncoder.svg(qrVjParts(unescapeData(textIn)), ctype.qr.ecl, ctype.qr)
-            else
-                textOut = Pdf417Fixed.svg(unescapeData(textIn), ctype.fixed.cols, ctype.fixed.rows, ctype.fixed.ecc)
-        } catch (e) {
-            err(e.message)
-            textOut = ''
-            theimg3.width = theimg3.height = 0  // don't leave a barcode of the previous data
-            return
-        }
+    try {
+        if (ctype.qr)
+            textOut = QrEncoder.svg(qrVjParts(unescapeData(textIn)), ctype.qr.ecl, ctype.qr)
+        else if (ctype.fixed)
+            textOut = Pdf417.svg(unescapeData(textIn), { ecc: ctype.fixed.ecc, cols: ctype.fixed.cols,
+                                                         rows: ctype.fixed.rows, truncated: true })
+        else
+            textOut = Pdf417.svg(unescapeData(textIn), { ecc: ecc, cols: ssize })
+    } catch (e) {
+        err(e.message)
+        textOut = ''
+        theimg3.width = theimg3.height = 0  // don't leave a barcode of the previous data
+        return
     }
-    else
-        run(ctype.lib, textIn, ecc, ssize)
     
  //   theimg.innerHTML = textOut
     
@@ -432,13 +429,12 @@ function exportSvg() {
     download(new Blob([textOut], {type: "image/svg+xml"}), exportName('svg'))
 }
 
-// lib: barcode type passed to run() - 0 aztec, 1 pdf417
-// size: aztec symbol size / pdf417 data columns
-// fixed: symbol with a fixed shape, encoded by pdf417_fixed.js (truncated PDF417)
+// size: pdf417 data columns
+// fixed: truncated PDF417 with a fixed shape
+// qr: QR code options for qr_encoder.js
 // rules: data conventions applied to the fields and checked in the raw data
 var codeTypes = {
-    '0': { lib: 0, size: '11' },
-    '1': { lib: 1, size: '6' },
+    '1': { size: '6' },
     // Vietjet: always 8 columns x 8 rows, ECC level 2, truncated (measured from real boarding passes)
     '2': { fixed: { cols: 8, rows: 8, ecc: 2 }, size: '8', rules: VJ_RULES },
     // Vietjet check-in QR: I|<code>|<LAST>/<MIDDLE FIRST>|VJ, ECC H (measured from a real one)
@@ -530,7 +526,7 @@ function applyTemplateRules() {
     format()
 }
 
-// same escapes as escape_char_process() in main.cpp
+// same escapes as the old zint build (escape_char_process)
 var ESCAPES = { '0': '\x00', 'E': '\x04', 'a': '\x07', 'b': '\x08', 't': '\t', 'n': '\n', 'v': '\x0b',
                 'f': '\x0c', 'r': '\r', 'e': '\x1b', 'G': '\x1d', 'R': '\x1e', '\\': '\\' }
 function unescapeData(s) {
@@ -562,8 +558,7 @@ function typeUpdate() {
 }
 
 </script>
-<script src="js_qr_brd.js"></script>
-<script src="pdf417_fixed.js"></script>
+<script src="pdf417.js"></script>
 <script src="qr_encoder.js"></script>
 <style>
 body, input, textarea, select, button {
@@ -761,7 +756,6 @@ Chữ IN HOA không dấu. Nhập ở các ô thì dấu tiếng Việt tự đ�
 </div>
 <span class="unimpCol">Loại mã</span>
 <select id="codeTypeSel" class="unimpCol" onchange="typeUpdate()">
-  <option value="0">aztec</option>
   <option value="1" selected>pdf417</option>
   <option value="2">PDF417-VJ</option>
   <option value="3">QR-VJ (check-in)</option>
