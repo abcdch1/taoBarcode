@@ -47,6 +47,7 @@ function start()
     formatSeqNum()
     formatTail()
     format()
+    typeUpdate()
 }
 
 function errclear() {
@@ -68,8 +69,19 @@ function update(fromRaw)
         textIn = textEdit.value
     var ecc =  parseInt(eccSelect.value)
     var ssize = parseInt(symSize.value)  // if this is 0, ecc is used
-    var btype = parseInt(codeTypeSel.value)
-    run(btype, textIn, ecc, ssize)
+    var ctype = codeTypes[codeTypeSel.value]
+    if (ctype.fixed) {
+        try {
+            textOut = Pdf417Fixed.svg(unescapeData(textIn), ctype.fixed.cols, ctype.fixed.rows, ctype.fixed.ecc)
+        } catch (e) {
+            err(e.message)
+            textOut = ''
+            theimg3.width = theimg3.height = 0  // don't leave a barcode of the previous data
+            return
+        }
+    }
+    else
+        run(ctype.lib, textIn, ecc, ssize)
     
  //   theimg.innerHTML = textOut
     
@@ -138,6 +150,12 @@ function formatField(name, doRun) {
     errclear('')
     var def = fldDef[name]
     var v = document.getElementById(name + "Ed").value
+    var rules = activeRules()
+    if (rules && name == 'fNum') {
+        if (!rules.fNum.test(v))
+            err("Vietjet: số hiệu chuyến bay gồm 1-4 chữ số")
+        v = padLeft(v, 4)
+    }
     if (def.exact && v.length != def.exact)
         err('"' + def.desc + '" phải có đúng ' + def.exact + " ký tự")
     else if (v.length > def.pad)
@@ -185,7 +203,10 @@ function formatClass(doRun) {
 function formatSeat(doRun) {
     errclear()
     var n = seatNumEd.value
-    if (n.length > 4)
+    var rules = activeRules()
+    if (rules && !rules.seat.test(n.toUpperCase()))
+        err("Vietjet: số ghế gồm 1-3 chữ số + 1 chữ cái, ví dụ 12C")
+    else if (n.length > 4)
         err("Số ghế dài quá 4 ký tự")
     fields.seat = padLeft(n, 4)
     if (doRun)
@@ -194,7 +215,10 @@ function formatSeat(doRun) {
 function formatSeqNum(doRun) {
     errclear()
     var n = seqNumEd.value
-    if (n.length > 4)
+    var rules = activeRules()
+    if (rules && !rules.seqNum.test(n))
+        err("Vietjet: số thứ tự check-in gồm 1-4 chữ số")
+    else if (n.length > 4)
         err("Số thứ tự check-in dài quá 4 ký tự")
     fields.seqNum = upPadRight(padLeft(n, 4), 5)
     if (doRun)
@@ -212,6 +236,27 @@ function formatTail(doRun) {
 }
 
 // ---------------- Raw data -> fields ----------------
+
+// Vietjet boarding pass conventions (measured from real VJ boarding passes)
+var VJ_RULES = {
+    name: "Mẫu PDF417-VJ",
+    rawLength: 60,
+    raw: {  // replaces the rawDef check at that start position
+        36: { re: /^VJ $/,        hint: 'Vietjet: "VJ" + 1 dấu cách' },
+        39: { re: /^[0-9]{4} $/,  hint: "Vietjet: 4 chữ số + 1 dấu cách, ví dụ 0213" },
+        47: { re: /^ $/,          hint: "Vietjet: để trống (1 dấu cách)" },
+        48: { re: /^[0-9]{3}[A-Z]$/, hint: "Vietjet: 3 chữ số + 1 chữ cái, ví dụ 012C" },
+        52: { re: /^[0-9]{4} $/,  hint: "Vietjet: 4 chữ số + 1 dấu cách, ví dụ 0045" },
+        57: { re: /^1$/,          hint: "Vietjet: phải là 1" },
+        58: { re: /^00$/,         hint: "Vietjet: phải là 00, không có dữ liệu thêm" }
+    },
+    airline: 'VJ',
+    cls: ' ',
+    tail: '100',
+    fNum: /^[0-9]{1,4}$/,
+    seat: /^[0-9]{1,3}[A-Z]$/,
+    seqNum: /^[0-9]{1,4}$/
+}
 
 // mandatory part of a single-leg BCBP string (IATA Res.792), 60 chars
 var rawDef = [
@@ -239,11 +284,15 @@ function parseRaw(s) {
         errs.push("Dữ liệu phải dài ít nhất " + RAW_MIN_LEN + " ký tự (hiện có " + s.length + ")")
         return { errs: errs }
     }
+    var rules = activeRules()
+    if (rules && s.length != rules.rawLength)
+        errs.push(rules.name + " yêu cầu đúng " + rules.rawLength + " ký tự, không có dữ liệu thêm (hiện có " + s.length + ")")
     rawDef.forEach(function(d) {
         var v = s.substr(d.start, d.len)
-        if (!d.re.test(v))
+        var chk = (rules && rules.raw[d.start]) || d
+        if (!chk.re.test(v))
             errs.push("Vị trí " + (d.start + 1) + (d.len > 1 ? "-" + (d.start + d.len) : "") + " – " + d.desc
-                      + ': "' + v.replace(/ /g, '·') + '" không hợp lệ (' + d.hint + ")")
+                      + ': "' + v.replace(/ /g, '·') + '" không hợp lệ (' + chk.hint + ")")
         if (d.name)
             vals[d.name] = v
     })
@@ -353,16 +402,85 @@ function exportSvg() {
     download(new Blob([textOut], {type: "image/svg+xml"}), exportName('svg'))
 }
 
+// lib: barcode type passed to run() - 0 aztec, 1 pdf417
+// size: aztec symbol size / pdf417 data columns
+// fixed: symbol with a fixed shape, encoded by pdf417_fixed.js (truncated PDF417)
+// rules: data conventions applied to the fields and checked in the raw data
+var codeTypes = {
+    '0': { lib: 0, size: '11' },
+    '1': { lib: 1, size: '6' },
+    // Vietjet: always 8 columns x 8 rows, ECC level 2, truncated (measured from real boarding passes)
+    '2': { fixed: { cols: 8, rows: 8, ecc: 2 }, size: '8', rules: VJ_RULES }
+}
+
+function activeRules() {
+    return codeTypes[codeTypeSel.value].rules
+}
+
+// lock the fields the template fixes, put its values in and rebuild the raw data
+function applyTemplateRules() {
+    var rules = activeRules()
+    var blank = classSel.querySelector('option[value=" "]')
+    if (rules) {
+        fOpEd.value = rules.airline
+        if (!blank) {
+            blank = document.createElement('option')
+            blank.value = ' '
+            blank.textContent = 'Để trống (' + rules.name + ')'
+            classSel.appendChild(blank)
+        }
+        classSel.value = rules.cls
+        tailEd.value = rules.tail
+    }
+    else if (blank) {
+        if (classSel.value == ' ')
+            classSel.value = 'Y'
+        classSel.removeChild(blank)
+    }
+    fOpEd.readOnly = tailEd.readOnly = classSel.disabled = !!rules
+    rulesNote.style.display = rules ? 'block' : 'none'
+
+    formatName()
+    formatField('bookRef')
+    formatField('from')
+    formatField('to')
+    formatField('fOp')
+    formatField('fNum')
+    formatDay()
+    formatClass()
+    formatSeat()
+    formatSeqNum()
+    formatTail()
+    format()
+}
+
+// same escapes as escape_char_process() in main.cpp
+var ESCAPES = { '0': '\x00', 'E': '\x04', 'a': '\x07', 'b': '\x08', 't': '\t', 'n': '\n', 'v': '\x0b',
+                'f': '\x0c', 'r': '\r', 'e': '\x1b', 'G': '\x1d', 'R': '\x1e', '\\': '\\' }
+function unescapeData(s) {
+    return s.replace(/\\([0EabtnvfreGR\\])/g, function(m, c) { return ESCAPES[c] })
+}
+
+var savedEcc = 0
 function typeUpdate() {
-    if (codeTypeSel.value == "0")
-        symSize.value = "11"  // size of the aztec
+    var ctype = codeTypes[codeTypeSel.value]
+    symSize.value = ctype.size
+    if (ctype.fixed && !eccSelect.disabled) {
+        savedEcc = eccSelect.selectedIndex
+        eccSelect.value = '' + ctype.fixed.ecc
+    }
+    else if (!ctype.fixed && eccSelect.disabled)
+        eccSelect.selectedIndex = savedEcc
+    eccSelect.disabled = symSize.disabled = !!ctype.fixed
+    if (ctype.rules || classSel.disabled)  // entering or leaving a template with rules
+        applyTemplateRules()
     else
-        symSize.value = "6"  // columns in the barcode
-    update()
+        update()
 }
 
 </script>
 <script src="js_qr_brd.js"></script>
+<script src="pdf417_fixed.js"></script>
 <style>
 body, input, textarea, select, button {
     font-family: monospace;
@@ -459,6 +577,14 @@ input, #classSel {
     margin: 6px 0;
     display: none;
 }
+#rulesNote {
+    display: none;
+    color: #555;
+    background: #f3f6ff;
+    border: 1px solid #c8d4f5;
+    padding: 6px 8px;
+    margin: 6px 0;
+}
 #rawOk {
     color: #080;
     margin: 6px 0;
@@ -524,6 +650,9 @@ R mã đặt chỗ (6 + cách)  F sân bay đi (3)  T sân bay đến (3)  O hã
 S số hiệu chuyến bay (5)  D ngày trong năm (3)  C hạng ghế  G số ghế (4)
 Q số thứ tự check-in (5)  P trạng thái hành khách  L độ dài dữ liệu thêm (hex)</div>
 <textarea id="textEdit" rows="4" spellcheck="false" oninput="rawChanged()"></textarea>
+<div id="rulesNote">Mẫu PDF417-VJ: đúng 60 ký tự · hãng bay <b>VJ·</b> · số hiệu chuyến bay 4 chữ số + cách (<b>0213·</b>)
+· hạng ghế để trống (<b>·</b>) · số ghế 3 số + 1 chữ (<b>012C</b>) · số thứ tự 4 số + cách (<b>0045·</b>) · đuôi <b>100</b>
+<br>(· là dấu cách)</div>
 <ul id="rawErr"></ul>
 <div id="rawOk">✓ Dữ liệu đúng mẫu</div>
 
@@ -542,6 +671,7 @@ Q số thứ tự check-in (5)  P trạng thái hành khách  L độ dài dữ 
 <select id="codeTypeSel" class="unimpCol" onchange="typeUpdate()">
   <option value="0">aztec</option>
   <option value="1" selected>pdf417</option>
+  <option value="2">PDF417-VJ</option>
 </select>
 </div>
 
