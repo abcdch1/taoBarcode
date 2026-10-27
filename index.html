@@ -3,16 +3,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tạo mã vạch thẻ lên máy bay</title>
-<script>
-  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
-  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
-  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
-  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
-  ga('create', 'UA-2231125-6', 'auto');
-  ga('send', 'pageview');
-</script>
-
-
 <script type="text/javascript">
 "use strict"
     
@@ -27,6 +17,8 @@ var ctx = null
 function start() 
 {
     ctx = theimg3.getContext('2d')
+    if (typeof APPS_SCRIPT_MODE != 'undefined' && APPS_SCRIPT_MODE == 'sidebar')
+        sheetsPanel.style.display = 'block'
 
  //   var d = new Date()
  //   var dy = getDayOfYear(d.getDate(), d.getMonth(), d.getFullYear())
@@ -59,23 +51,27 @@ function err(msg) {
     }
 }
 
+// SVG of the selected code type and options for this raw data; throws if it can't be encoded
+function makeSvg(raw) {
+    var ecc = parseInt(eccSelect.value) || 0
+    var ssize = parseInt(symSize.value) || 0  // pdf417 data columns, 0 = automatic
+    var ctype = codeTypes[codeTypeSel.value]
+    if (ctype.qr)
+        return QrEncoder.svg(qrVjParts(unescapeData(raw)), ctype.qr.ecl, ctype.qr)
+    if (ctype.fixed)
+        return Pdf417.svg(unescapeData(raw), { ecc: ctype.fixed.ecc, cols: ctype.fixed.cols,
+                                               rows: ctype.fixed.rows, truncated: true })
+    return Pdf417.svg(unescapeData(raw), { ecc: ecc, cols: ssize })
+}
+
 function update(fromRaw)
 {
     if (!fromRaw)
         textEdit.value = textIn
     else
         textIn = textEdit.value
-    var ecc = parseInt(eccSelect.value) || 0
-    var ssize = parseInt(symSize.value) || 0  // pdf417 data columns, 0 = automatic
-    var ctype = codeTypes[codeTypeSel.value]
     try {
-        if (ctype.qr)
-            textOut = QrEncoder.svg(qrVjParts(unescapeData(textIn)), ctype.qr.ecl, ctype.qr)
-        else if (ctype.fixed)
-            textOut = Pdf417.svg(unescapeData(textIn), { ecc: ctype.fixed.ecc, cols: ctype.fixed.cols,
-                                                         rows: ctype.fixed.rows, truncated: true })
-        else
-            textOut = Pdf417.svg(unescapeData(textIn), { ecc: ecc, cols: ssize })
+        textOut = makeSvg(textIn)
     } catch (e) {
         err(e.message)
         textOut = ''
@@ -533,6 +529,88 @@ function unescapeData(s) {
     return s.replace(/\\([0EabtnvfreGR\\])/g, function(m, c) { return ESCAPES[c] })
 }
 
+// ---------------- Google Sheets (only inside the Apps Script sidebar) ----------------
+
+function svgToPng(svg) {
+    return new Promise(function(resolve, reject) {
+        var img = new Image()
+        img.onload = function() {
+            var c = document.createElement('canvas')
+            c.width = img.width
+            c.height = img.height
+            c.getContext('2d').drawImage(img, 0, 0)
+            resolve(c.toDataURL('image/png'))
+        }
+        img.onerror = reject
+        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
+    })
+}
+
+function callServer(name) {
+    var args = Array.prototype.slice.call(arguments, 1)
+    return new Promise(function(resolve, reject) {
+        var r = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)
+        r[name].apply(r, args)
+    })
+}
+
+function sheetsStatusMsg(msg) {
+    sheetsStatus.textContent = msg
+}
+
+function sheetsInsertCurrent() {
+    if (!textOut) {
+        sheetsStatusMsg("Chưa có mã để chèn")
+        return
+    }
+    sheetsStatusMsg("Đang chèn...")
+    svgToPng(textOut)
+        .then(function(png) { return callServer('putImageInActiveCell', png, textIn) })
+        .then(function(where) { sheetsStatusMsg("Đã chèn vào ô " + where) })
+        .catch(function(e) { sheetsStatusMsg("Lỗi: " + (e.message || e)) })
+}
+
+// check one raw value of the selected type, returns the raw data to encode or throws
+function sheetsCheckRaw(raw) {
+    var ctype = codeTypes[codeTypeSel.value]
+    if (ctype.qr || ctype.rules)
+        raw = toAsciiUpper(raw)  // names typed with Vietnamese diacritics in the sheet
+    var errs = ctype.qr ? parseQrVj(raw).errs : parseRaw(raw).errs
+    if (errs.length)
+        throw new Error(errs[0])
+    return raw
+}
+
+function sheetsBatch() {
+    sheetsStatusMsg("Đang đọc vùng chọn...")
+    callServer('getSelectedRaw').then(function(sel) {
+        var done = 0, skipped = [], i = 0
+        function next() {
+            if (i >= sel.values.length) {
+                sheetsStatusMsg("Xong: " + done + " mã" + (skipped.length ? "\nBỏ qua:\n" + skipped.join("\n") : ""))
+                return
+            }
+            var row = sel.row + i, raw = sel.values[i++]
+            if (!raw)
+                return next()
+            var svg
+            try {
+                raw = sheetsCheckRaw(raw)
+                svg = makeSvg(raw)
+            } catch (e) {
+                skipped.push("Dòng " + row + ": " + e.message)
+                return next()
+            }
+            sheetsStatusMsg("Đang tạo dòng " + row + " (" + i + "/" + sel.values.length + ")...")
+            svgToPng(svg)
+                .then(function(png) { return callServer('putImage', sel.sheet, row, sel.col + 1, png, raw) })
+                .then(function() { done++; next() })
+                .catch(function(e) { skipped.push("Dòng " + row + ": " + (e.message || e)); next() })
+        }
+        next()
+    }).catch(function(e) { sheetsStatusMsg("Lỗi: " + (e.message || e)) })
+}
+
 var savedEcc = 0, prevType = null
 function typeUpdate() {
     var ctype = codeTypes[codeTypeSel.value]
@@ -671,6 +749,22 @@ input, #classSel {
 .options {
     margin-top: 8px;
 }
+#sheetsPanel {
+    display: none;
+    margin-top: 16px;
+    padding-top: 8px;
+    border-top: 1px solid #ddd;
+}
+#sheetsPanel button {
+    font-size: 110%;
+    padding: 6px 14px;
+    margin: 4px 0;
+    cursor: pointer;
+}
+#sheetsStatus {
+    white-space: pre-wrap;
+    margin-top: 6px;
+}
 .exportBar button {
     font-size: 110%;
     padding: 6px 14px;
@@ -767,6 +861,16 @@ Chữ IN HOA không dấu. Nhập ở các ô thì dấu tiếng Việt tự đ�
 <div class="exportBar">
 <button type="button" onclick="exportPng()">Xuất ảnh PNG</button>
 <button type="button" onclick="exportSvg()">Xuất SVG</button>
+</div>
+
+<!-- shown only in the Google Sheets sidebar (apps-script/) -->
+<div id="sheetsPanel">
+<h2>Google Trang tính</h2>
+<button type="button" onclick="sheetsInsertCurrent()">Chèn mã này vào ô đang chọn</button>
+<p>Tạo hàng loạt: chọn các ô chứa Raw data (1 cột). Mã theo loại đang chọn ở trên
+được chèn vào cột ngay bên phải.</p>
+<button type="button" onclick="sheetsBatch()">Tạo mã cho vùng đang chọn</button>
+<div id="sheetsStatus"></div>
 </div>
 </div>
 

@@ -1,0 +1,1618 @@
+<!doctype html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tạo mã vạch thẻ lên máy bay</title>
+<script>var APPS_SCRIPT_MODE = <?!= JSON.stringify(mode) ?></script>
+<script type="text/javascript">
+"use strict"
+    
+    
+var textOut = null
+var textIn = ""
+var fields = {}
+
+var getDayOfYear
+var ctx = null
+    
+function start() 
+{
+    ctx = theimg3.getContext('2d')
+    if (typeof APPS_SCRIPT_MODE != 'undefined' && APPS_SCRIPT_MODE == 'sidebar')
+        sheetsPanel.style.display = 'block'
+
+ //   var d = new Date()
+ //   var dy = getDayOfYear(d.getDate(), d.getMonth(), d.getFullYear())
+  //  dayOfYearEd.value = '' + dy
+    dateEd.value = localDateValue(new Date())
+    
+    formatName()
+    formatField('bookRef')
+    formatField('from')
+    formatField('to')
+    formatField('fOp')
+    formatField('fNum')
+    readDate()
+    formatClass()
+    formatSeat()
+    formatSeqNum()
+    formatTail()
+    format()
+    typeUpdate()
+}
+
+function errclear() {
+    errMsg.innerHTML = ''
+    errMsg.style.visibility = 'hidden'
+}
+function err(msg) {
+    if (errMsg.innerHTML == '') {
+        errMsg.innerHTML = msg
+        errMsg.style.visibility = 'visible'
+    }
+}
+
+// SVG of the selected code type and options for this raw data; throws if it can't be encoded
+function makeSvg(raw) {
+    var ecc = parseInt(eccSelect.value) || 0
+    var ssize = parseInt(symSize.value) || 0  // pdf417 data columns, 0 = automatic
+    var ctype = codeTypes[codeTypeSel.value]
+    if (ctype.qr)
+        return QrEncoder.svg(qrVjParts(unescapeData(raw)), ctype.qr.ecl, ctype.qr)
+    if (ctype.fixed)
+        return Pdf417.svg(unescapeData(raw), { ecc: ctype.fixed.ecc, cols: ctype.fixed.cols,
+                                               rows: ctype.fixed.rows, truncated: true })
+    return Pdf417.svg(unescapeData(raw), { ecc: ecc, cols: ssize })
+}
+
+function update(fromRaw)
+{
+    if (!fromRaw)
+        textEdit.value = textIn
+    else
+        textIn = textEdit.value
+    try {
+        textOut = makeSvg(textIn)
+    } catch (e) {
+        err(e.message)
+        textOut = ''
+        theimg3.width = theimg3.height = 0  // don't leave a barcode of the previous data
+        return
+    }
+    
+ //   theimg.innerHTML = textOut
+    
+    theimg2.onload = function() {
+        theimg3.width = theimg2.width
+        theimg3.height = theimg2.height
+        ctx.drawImage(theimg2, 0, 0)
+    }
+ 
+    var b = new Blob([textOut], {type: "image/svg+xml"});
+    var reader = new FileReader();
+    reader.onload = function(e) { 
+        theimg2.src = e.target.result 
+    }
+    reader.onerror = function(e) {
+        console.log(e)
+    }
+    reader.readAsDataURL(b); // read as data URL since we want to put it in an img src
+        
+}
+
+function format() {
+    if (codeTypes[codeTypeSel.value].qr) {
+        textIn = qrVjBuild()
+        showRawErrors([])
+        update()
+        return
+    }
+    textIn = "M1" + fields.name + "E" + fields.bookRef + fields.from + fields.to 
+             + fields.fOp + fields.fNum + fields.date + fields.cls + fields.seat + fields.seqNum
+             + fields.tail
+             // tail: passenger status (1) + hex length of following data (2) + conditional data
+    showRawErrors([])
+    update()
+}
+function upPadRight(s, n) {
+    s = s.toUpperCase()
+    while(s.length < n)
+        s = s + ' ';
+    return s.substr(0,n)
+}
+
+function padLeft(s, n) {
+    s = s.toUpperCase()
+    while(s.length < n)
+        s = '0' + s;
+    return s.substr(0,n)
+}
+
+function formatName(doRun) {
+    errclear()
+    var v = lastNameEd.value + "/" + firstNameEd.value
+    if (codeTypes[codeTypeSel.value].qr) {
+        if (!/^[A-Z ]*$/.test(toAsciiUpper(v.replace('/', ''))))
+            err("Họ tên chỉ gồm chữ cái và dấu cách")
+    }
+    else {
+        if (lastNameEd.value.length > 18) // need space for slash and last name
+            err("Họ dài quá 18 ký tự")
+        if (v.length > 20)
+            err("Họ + tên dài quá 20 ký tự")
+    }
+
+    fields.name = upPadRight(v, 20)
+    if (doRun)
+        format()
+}
+
+var fldDef = {
+    'bookRef': { pad: 7, exact: 6, desc:"Mã đặt chỗ"},
+    'from':    { pad: 3, desc:"Sân bay đi"},
+    'to':      { pad: 3, desc:"Sân bay đến"},
+    'fOp':     { pad: 3, exact: 2, desc:"Hãng bay"},
+    'fNum':    { pad: 5, desc:"Số hiệu chuyến bay"}
+}
+
+function formatField(name, doRun) {
+    errclear('')
+    var def = fldDef[name]
+    var v = document.getElementById(name + "Ed").value
+    var rules = activeRules()
+    if (rules && name == 'fNum') {
+        if (!rules.fNum.test(v))
+            err("Vietjet: số hiệu chuyến bay gồm 1-4 chữ số")
+        v = padLeft(v, 4)
+    }
+    if (def.exact && v.length != def.exact)
+        err('"' + def.desc + '" phải có đúng ' + def.exact + " ký tự")
+    else if (v.length > def.pad)
+        err('"' + def.desc + '" dài quá ' + def.pad + " ký tự")
+    fields[name] = upPadRight(v, def.pad)
+    if (doRun)
+        format()
+}
+
+function formatDay(doRun) {
+    fields.date = padLeft(dayOfYearEd.value, 3)
+    if (doRun)
+        format()
+}
+function todayInputValue() { // http://stackoverflow.com/questions/6982692/html5-input-type-date-default-value-to-today
+    var local = new Date();
+ //   local.setMinutes(this.getMinutes() - this.getTimezoneOffset());
+    return local.toJSON().slice(0,10);
+}
+
+function dayOfYear(yr, mon, mday)
+{
+    var now = new Date(yr, mon, mday, 1, 0, 0)
+    var start = new Date(yr, 0, 1, 0, 0);
+    var diff = now - start;
+    var oneDay = 1000 * 60 * 60 * 24;
+    var day = Math.floor(diff / oneDay) + 1; // start at 1
+    return day
+}
+
+function readDate(toRun) {
+    var dl = dateEd.value.split('-')
+    var mday = parseInt(dl[2])
+    var mon = parseInt(dl[1]) - 1  // the range of the input is [1-12]
+    var yr = parseInt(dl[0])
+    
+    dayOfYearEd.value = dayOfYear(yr, mon, mday)
+    formatDay(toRun)
+}
+function formatClass(doRun) {
+    fields.cls = classSel.value
+    if (doRun)
+        format()
+}
+function formatSeat(doRun) {
+    errclear()
+    var n = seatNumEd.value
+    var rules = activeRules()
+    if (rules && !rules.seat.test(n.toUpperCase()))
+        err("Vietjet: số ghế gồm 1-3 chữ số + 1 chữ cái, ví dụ 12C")
+    else if (n.length > 4)
+        err("Số ghế dài quá 4 ký tự")
+    fields.seat = padLeft(n, 4)
+    if (doRun)
+        format()
+}
+function formatSeqNum(doRun) {
+    errclear()
+    var n = seqNumEd.value
+    var rules = activeRules()
+    if (rules && !rules.seqNum.test(n))
+        err("Vietjet: số thứ tự check-in gồm 1-4 chữ số")
+    else if (n.length > 4)
+        err("Số thứ tự check-in dài quá 4 ký tự")
+    fields.seqNum = upPadRight(padLeft(n, 4), 5)
+    if (doRun)
+        format()
+}    
+
+function formatTail(doRun) {
+    errclear()
+    var v = tailEd.value.toUpperCase()
+    if (v.length < 3)
+        err("Trạng thái + dữ liệu bổ sung phải có ít nhất 3 ký tự (ví dụ 100)")
+    fields.tail = upPadRight(v, Math.max(v.length, 3))
+    if (doRun)
+        format()
+}
+
+// ---------------- Raw data -> fields ----------------
+
+// Vietjet boarding pass conventions (measured from real VJ boarding passes)
+var VJ_RULES = {
+    name: "Mẫu PDF417-VJ",
+    rawLength: 60,
+    raw: {  // replaces the rawDef check at that start position
+        36: { re: /^VJ $/,        hint: 'Vietjet: "VJ" + 1 dấu cách' },
+        39: { re: /^[0-9]{4} $/,  hint: "Vietjet: 4 chữ số + 1 dấu cách, ví dụ 0213" },
+        47: { re: /^ $/,          hint: "Vietjet: để trống (1 dấu cách)" },
+        48: { re: /^[0-9]{3}[A-Z]$/, hint: "Vietjet: 3 chữ số + 1 chữ cái, ví dụ 012C" },
+        52: { re: /^[0-9]{4} $/,  hint: "Vietjet: 4 chữ số + 1 dấu cách, ví dụ 0045" },
+        57: { re: /^1$/,          hint: "Vietjet: phải là 1" },
+        58: { re: /^00$/,         hint: "Vietjet: phải là 00, không có dữ liệu thêm" }
+    },
+    airline: 'VJ',
+    cls: ' ',
+    tail: '100',
+    fNum: /^[0-9]{1,4}$/,
+    seat: /^[0-9]{1,3}[A-Z]$/,
+    seqNum: /^[0-9]{1,4}$/
+}
+
+// mandatory part of a single-leg BCBP string (IATA Res.792), 60 chars
+var rawDef = [
+    { start: 0,  len: 1,  desc: "Mã định dạng",         re: /^M$/,                       hint: "phải là M" },
+    { start: 1,  len: 1,  desc: "Số chặng bay",          re: /^1$/,                       hint: "chỉ hỗ trợ 1 chặng" },
+    { start: 2,  len: 20, desc: "Tên hành khách",        re: /^[A-Z0-9\/ \-.']{20}$/,     hint: "chữ IN HOA, dạng HỌ/TÊN", name: 'name' },
+    { start: 22, len: 1,  desc: "Chỉ báo vé điện tử",    re: /^E$/,                       hint: "phải là E" },
+    { start: 23, len: 7,  desc: "Mã đặt chỗ",            re: /^[A-Z0-9]{6} $/,            hint: "đúng 6 ký tự IN HOA/số + 1 dấu cách", name: 'bookRef' },
+    { start: 30, len: 3,  desc: "Sân bay đi",            re: /^[A-Z]{3}$/,                hint: "3 chữ cái IN HOA", name: 'from' },
+    { start: 33, len: 3,  desc: "Sân bay đến",           re: /^[A-Z]{3}$/,                hint: "3 chữ cái IN HOA", name: 'to' },
+    { start: 36, len: 3,  desc: "Hãng bay",              re: /^[A-Z0-9]{2} $/,            hint: "đúng 2 ký tự IN HOA/số + 1 dấu cách", name: 'fOp' },
+    { start: 39, len: 5,  desc: "Số hiệu chuyến bay",        re: /^[0-9A-Z ]{5}$/,            hint: "số + chữ IN HOA", name: 'fNum' },
+    { start: 44, len: 3,  desc: "Ngày trong năm",        re: /^[0-9]{3}$/,                hint: "3 chữ số 001-366", name: 'day' },
+    { start: 47, len: 1,  desc: "Hạng ghế",              re: /^[A-Z]$/,                   hint: "1 chữ cái IN HOA", name: 'cls' },
+    { start: 48, len: 4,  desc: "Số ghế",                re: /^[0-9A-Z ]{4}$/,            hint: "ví dụ 035A", name: 'seat' },
+    { start: 52, len: 5,  desc: "Số thứ tự check-in",        re: /^[0-9A-Z ]{5}$/,            hint: "ví dụ 0001 ", name: 'seqNum' },
+    { start: 57, len: 1,  desc: "Trạng thái hành khách",      re: /^[0-9A-Z]$/,                hint: "1 ký tự" },
+    { start: 58, len: 2,  desc: "Độ dài dữ liệu thêm",   re: /^[0-9A-F]{2}$/,             hint: "2 chữ số hex" }
+]
+var RAW_MIN_LEN = 60
+
+function parseRaw(s) {
+    var errs = [], vals = {}
+    if (s.length < RAW_MIN_LEN) {
+        errs.push("Dữ liệu phải dài ít nhất " + RAW_MIN_LEN + " ký tự (hiện có " + s.length + ")")
+        return { errs: errs }
+    }
+    var rules = activeRules()
+    if (rules && s.length != rules.rawLength)
+        errs.push(rules.name + " yêu cầu đúng " + rules.rawLength + " ký tự, không có dữ liệu thêm (hiện có " + s.length + ")")
+    rawDef.forEach(function(d) {
+        var v = s.substr(d.start, d.len)
+        var chk = (rules && rules.raw[d.start]) || d
+        if (!chk.re.test(v))
+            errs.push("Vị trí " + (d.start + 1) + (d.len > 1 ? "-" + (d.start + d.len) : "") + " – " + d.desc
+                      + ': "' + v.replace(/ /g, '·') + '" không hợp lệ (' + chk.hint + ")")
+        if (d.name)
+            vals[d.name] = v
+    })
+    if (errs.length == 0) {
+        if (vals.name.trim() == '')
+            errs.push("Tên hành khách đang để trống")
+        if (vals.fNum.trim() == '')
+            errs.push("Số hiệu chuyến bay đang để trống")
+        var day = parseInt(vals.day, 10)
+        if (day < 1 || day > 366)
+            errs.push("Ngày trong năm phải trong khoảng 001-366 (hiện là " + vals.day + ")")
+        var varLen = parseInt(s.substr(58, 2), 16), haveLen = s.length - RAW_MIN_LEN
+        if (haveLen < varLen)
+            errs.push("Độ dài dữ liệu thêm khai báo là " + varLen + " ký tự nhưng chỉ có " + haveLen)
+    }
+    vals.tail = s.substr(57)
+    return { errs: errs, vals: vals }
+}
+
+function showRawErrors(errs) {
+    rawErr.innerHTML = ''
+    errs.forEach(function(e) {
+        var li = document.createElement('li')
+        li.textContent = e
+        rawErr.appendChild(li)
+    })
+    rawErr.style.display = errs.length ? 'block' : 'none'
+    rawOk.style.display = errs.length ? 'none' : 'block'
+    textEdit.classList.toggle('bad', errs.length > 0)
+}
+
+function localDateValue(d) {
+    return d.getFullYear() + '-' + padLeft('' + (d.getMonth() + 1), 2) + '-' + padLeft('' + d.getDate(), 2)
+}
+
+function rawChanged() {
+    if (codeTypes[codeTypeSel.value].qr) {
+        var q = parseQrVj(textEdit.value)
+        showRawErrors(q.errs)
+        if (q.errs.length == 0) {
+            bookRefEd.value = q.vals.code
+            lastNameEd.value = q.vals.last
+            firstNameEd.value = q.vals.first
+            formatName()
+            formatField('bookRef')
+        }
+        update(true)
+        return
+    }
+    var r = parseRaw(textEdit.value)
+    showRawErrors(r.errs)
+    if (r.errs.length == 0) {
+        var v = r.vals
+        var nm = v.name.trim().split('/')
+        lastNameEd.value = nm[0]
+        firstNameEd.value = nm.slice(1).join('/')
+        bookRefEd.value = v.bookRef.trim()
+        fromEd.value = v.from
+        toEd.value = v.to
+        fOpEd.value = v.fOp.trim()
+        fNumEd.value = v.fNum.trim()
+        var yr = new Date().getFullYear()
+        dateEd.value = localDateValue(new Date(yr, 0, parseInt(v.day, 10)))
+        dayOfYearEd.value = parseInt(v.day, 10)
+        if (!classSel.querySelector('option[value="' + v.cls + '"]')) {
+            var opt = document.createElement('option')
+            opt.value = opt.textContent = v.cls
+            classSel.appendChild(opt)
+        }
+        classSel.value = v.cls
+        seatNumEd.value = v.seat.trim().replace(/^0+(?=.)/, '')
+        seqNumEd.value = v.seqNum.trim()
+        tailEd.value = v.tail
+
+        formatName()
+        formatField('bookRef')
+        formatField('from')
+        formatField('to')
+        formatField('fOp')
+        formatField('fNum')
+        formatDay()
+        formatClass()
+        formatSeat()
+        formatSeqNum()
+        formatTail()
+    }
+    update(true)  // the barcode always shows exactly what is in the raw box
+}
+
+// ---------------- Export ----------------
+
+function exportName(ext) {
+    var parts = ['barcode', fromEd.value, toEd.value, fOpEd.value + fNumEd.value, dateEd.value]
+    if (codeTypes[codeTypeSel.value].qr)
+        parts = ['qr', bookRefEd.value, lastNameEd.value]
+    return parts.filter(function(p) { return p }).join('_').replace(/[^\w\-]+/g, '') + '.' + ext
+}
+
+function download(blob, name) {
+    var a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(function() { URL.revokeObjectURL(a.href) }, 1000)
+}
+
+function exportPng() {
+    if (!theimg3.width) {
+        err("Chưa có mã vạch để xuất")
+        return
+    }
+    theimg3.toBlob(function(b) { download(b, exportName('png')) }, 'image/png')
+}
+
+function exportSvg() {
+    if (!textOut) {
+        err("Chưa có mã vạch để xuất")
+        return
+    }
+    download(new Blob([textOut], {type: "image/svg+xml"}), exportName('svg'))
+}
+
+// size: pdf417 data columns
+// fixed: truncated PDF417 with a fixed shape
+// qr: QR code options for qr_encoder.js
+// rules: data conventions applied to the fields and checked in the raw data
+var codeTypes = {
+    '1': { size: '6' },
+    // Vietjet: always 8 columns x 8 rows, ECC level 2, truncated (measured from real boarding passes)
+    '2': { fixed: { cols: 8, rows: 8, ecc: 2 }, size: '8', rules: VJ_RULES },
+    // Vietjet check-in QR: I|<code>|<LAST>/<MIDDLE FIRST>|VJ, ECC H (measured from a real one)
+    '3': { qr: { ecl: 'H', unmaskedRemainder: true }, size: '' }
+}
+
+// ---------------- QR-VJ ----------------
+
+// uppercase without Vietnamese diacritics: "Nguyễn Văn Đức" -> "NGUYEN VAN DUC"
+function toAsciiUpper(s) {
+    return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'D').toUpperCase()
+}
+
+function qrVjBuild() {
+    return 'I|' + bookRefEd.value.toUpperCase() + '|' + toAsciiUpper(lastNameEd.value.trim()) + '/'
+         + toAsciiUpper(firstNameEd.value.trim()) + '|VJ'
+}
+
+// the app encodes each piece as its own QR segment: "I", "|<code>|", "<name>", "|VJ"
+function qrVjParts(s) {
+    var p = s.split('|'), out = []
+    p.forEach(function(x, i) {
+        out.push(i % 2 ? '|' + x + (i < p.length - 1 ? '|' : '') : x)
+    })
+    return out
+}
+
+function parseQrVj(s) {
+    var errs = [], p = s.split('|')
+    if (p.length != 4)
+        return { errs: ['Phải có đúng 4 phần ngăn cách bởi "|": I|<mã 6 ký tự>|<HỌ>/<TÊN ĐỆM VÀ TÊN>|VJ (hiện có '
+                        + p.length + ' phần)'] }
+    if (p[0] != 'I')
+        errs.push('Phần 1: "' + p[0] + '" không hợp lệ (phải là I)')
+    if (!/^[A-Z0-9]{6}$/.test(p[1]))
+        errs.push('Phần 2 – Mã: "' + p[1] + '" không hợp lệ (đúng 6 ký tự chữ IN HOA/số)')
+    var nm = p[2].split('/')
+    if (nm.length != 2)
+        errs.push('Phần 3 – Họ tên: "' + p[2] + '" không hợp lệ (dạng HỌ/TÊN ĐỆM VÀ TÊN, có đúng 1 dấu "/")')
+    else {
+        if (!/^[A-Z]+( [A-Z]+)*$/.test(nm[0]))
+            errs.push('Họ: "' + nm[0] + '" không hợp lệ (chữ IN HOA không dấu)')
+        if (!/^[A-Z]+( [A-Z]+)*$/.test(nm[1]))
+            errs.push('Tên đệm và tên: "' + nm[1] + '" không hợp lệ (chữ IN HOA không dấu, cách nhau 1 dấu cách)')
+    }
+    if (p[3] != 'VJ')
+        errs.push('Phần 4: "' + p[3] + '" không hợp lệ (phải là VJ)')
+    return { errs: errs, vals: { code: p[1], last: nm[0], first: nm[1] } }
+}
+
+function activeRules() {
+    return codeTypes[codeTypeSel.value].rules
+}
+
+// lock the fields the template fixes, put its values in and rebuild the raw data
+function applyTemplateRules() {
+    var rules = activeRules()
+    var blank = classSel.querySelector('option[value=" "]')
+    if (rules) {
+        fOpEd.value = rules.airline
+        if (!blank) {
+            blank = document.createElement('option')
+            blank.value = ' '
+            blank.textContent = 'Để trống (' + rules.name + ')'
+            classSel.appendChild(blank)
+        }
+        classSel.value = rules.cls
+        tailEd.value = rules.tail
+    }
+    else if (blank) {
+        if (classSel.value == ' ')
+            classSel.value = 'Y'
+        classSel.removeChild(blank)
+    }
+    fOpEd.readOnly = tailEd.readOnly = classSel.disabled = !!rules
+    rulesNote.style.display = rules ? 'block' : 'none'
+
+    formatName()
+    formatField('bookRef')
+    formatField('from')
+    formatField('to')
+    formatField('fOp')
+    formatField('fNum')
+    formatDay()
+    formatClass()
+    formatSeat()
+    formatSeqNum()
+    formatTail()
+    format()
+}
+
+// same escapes as the old zint build (escape_char_process)
+var ESCAPES = { '0': '\x00', 'E': '\x04', 'a': '\x07', 'b': '\x08', 't': '\t', 'n': '\n', 'v': '\x0b',
+                'f': '\x0c', 'r': '\r', 'e': '\x1b', 'G': '\x1d', 'R': '\x1e', '\\': '\\' }
+function unescapeData(s) {
+    return s.replace(/\\([0EabtnvfreGR\\])/g, function(m, c) { return ESCAPES[c] })
+}
+
+// ---------------- Google Sheets (only inside the Apps Script sidebar) ----------------
+
+function svgToPng(svg) {
+    return new Promise(function(resolve, reject) {
+        var img = new Image()
+        img.onload = function() {
+            var c = document.createElement('canvas')
+            c.width = img.width
+            c.height = img.height
+            c.getContext('2d').drawImage(img, 0, 0)
+            resolve(c.toDataURL('image/png'))
+        }
+        img.onerror = reject
+        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
+    })
+}
+
+function callServer(name) {
+    var args = Array.prototype.slice.call(arguments, 1)
+    return new Promise(function(resolve, reject) {
+        var r = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)
+        r[name].apply(r, args)
+    })
+}
+
+function sheetsStatusMsg(msg) {
+    sheetsStatus.textContent = msg
+}
+
+function sheetsInsertCurrent() {
+    if (!textOut) {
+        sheetsStatusMsg("Chưa có mã để chèn")
+        return
+    }
+    sheetsStatusMsg("Đang chèn...")
+    svgToPng(textOut)
+        .then(function(png) { return callServer('putImageInActiveCell', png, textIn) })
+        .then(function(where) { sheetsStatusMsg("Đã chèn vào ô " + where) })
+        .catch(function(e) { sheetsStatusMsg("Lỗi: " + (e.message || e)) })
+}
+
+// check one raw value of the selected type, returns the raw data to encode or throws
+function sheetsCheckRaw(raw) {
+    var ctype = codeTypes[codeTypeSel.value]
+    if (ctype.qr || ctype.rules)
+        raw = toAsciiUpper(raw)  // names typed with Vietnamese diacritics in the sheet
+    var errs = ctype.qr ? parseQrVj(raw).errs : parseRaw(raw).errs
+    if (errs.length)
+        throw new Error(errs[0])
+    return raw
+}
+
+function sheetsBatch() {
+    sheetsStatusMsg("Đang đọc vùng chọn...")
+    callServer('getSelectedRaw').then(function(sel) {
+        var done = 0, skipped = [], i = 0
+        function next() {
+            if (i >= sel.values.length) {
+                sheetsStatusMsg("Xong: " + done + " mã" + (skipped.length ? "\nBỏ qua:\n" + skipped.join("\n") : ""))
+                return
+            }
+            var row = sel.row + i, raw = sel.values[i++]
+            if (!raw)
+                return next()
+            var svg
+            try {
+                raw = sheetsCheckRaw(raw)
+                svg = makeSvg(raw)
+            } catch (e) {
+                skipped.push("Dòng " + row + ": " + e.message)
+                return next()
+            }
+            sheetsStatusMsg("Đang tạo dòng " + row + " (" + i + "/" + sel.values.length + ")...")
+            svgToPng(svg)
+                .then(function(png) { return callServer('putImage', sel.sheet, row, sel.col + 1, png, raw) })
+                .then(function() { done++; next() })
+                .catch(function(e) { skipped.push("Dòng " + row + ": " + (e.message || e)); next() })
+        }
+        next()
+    }).catch(function(e) { sheetsStatusMsg("Lỗi: " + (e.message || e)) })
+}
+
+var savedEcc = 0, prevType = null
+function typeUpdate() {
+    var ctype = codeTypes[codeTypeSel.value]
+    var prev = codeTypes[prevType] || {}
+    prevType = codeTypeSel.value
+    var locked = !!(ctype.fixed || ctype.qr)
+    symSize.value = ctype.size
+    if (locked && !eccSelect.disabled)
+        savedEcc = eccSelect.selectedIndex
+    else if (!locked && eccSelect.disabled)
+        eccSelect.selectedIndex = savedEcc
+    if (ctype.fixed)
+        eccSelect.value = '' + ctype.fixed.ecc
+    eccSelect.disabled = symSize.disabled = locked
+    bcbpFields.style.display = bcbpTemplate.style.display = symOptions.style.display = ctype.qr ? 'none' : ''
+    qrTemplate.style.display = ctype.qr ? 'block' : 'none'
+    if (ctype.rules || prev.rules)  // entering or leaving a template with rules
+        applyTemplateRules()
+    else if (ctype.qr || prev.qr)   // the raw data has another format
+        format()
+    else
+        update()
+}
+
+</script>
+<script>
+/*  Port of pdf417.c from Zint - A barcode generating program using libpng
+    Copyright (C) 2008 Robin Stuart <robin@zint.org.uk>
+    Portions Copyright (C) 2004 Grandzebu
+    Bug Fixes thanks to KL Chin <klchin@users.sourceforge.net>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details: <https://www.gnu.org/licenses/>.
+*/
+
+// PDF417 encoder, a JavaScript port of the PDF417 part of the zint version this page used to
+// bundle (pdf417.c), so the symbols are the same as the ones that zint/emscripten build produced:
+// - text and byte compaction (this zint build never selects numeric compaction),
+// - rows computed from the number of data columns, padded with 900 codewords like zint,
+// - optional truncated PDF417 (no right row indicator / stop pattern) and fixed row count,
+//   used by the PDF417-VJ template (Vietjet: 8 columns x 8 rows, ECC level 2, truncated).
+// Rendering matches zint's SVG: 10 px per module, rows 3 modules high, no quiet zone.
+"use strict"
+
+var Pdf417 = (function() {
+
+// codagemc from zint pdf417.c: 3 clusters x 929 codewords, 3 chars per codeword, 5 bits per char
+var PATTERNS = "urAxfsypyunkxdwyozpDAulspBkeBApAseAkprAuvsxhypnkutwxgzfDAplsfBkfrApvsuxyfnkptwuwzflspsyfvspxyftwpwzfxyyrxufkxFwymzonAudsxEyolkucwdBAoksucidAkokgdAcovkuhwxazdnAotsugydlkoswugjdksosidvkoxwuizdtsowydswowjdxwoyzdwydwjofAuFsxCyodkuEwxCjclAocsuEickkocgckcckEcvAohsuayctkogwuajcssogicsgcsacxsoiycwwoijcwicyyoFkuCwxBjcdAoEsuCicckoEguCbcccoEaccEoEDchkoawuDjcgsoaicggoabcgacgDobjcibcFAoCsuBicEkoCguBbcEcoCacEEoCDcECcascagcaacCkuAroBaoBDcCBtfkwpwyezmnAtdswoymlktcwwojFBAmksFAkmvkthwwqzFnAmtstgyFlkmswFksFkgFvkmxwtizFtsmwyFswFsiFxwmyzFwyFyzvfAxpsyuyvdkxowyujqlAvcsxoiqkkvcgxobqkcvcamfAtFswmyqvAmdktEwwmjqtkvgwxqjhlAEkkmcgtEbhkkqsghkcEvAmhstayhvAEtkmgwtajhtkqwwvijhssEsghsgExsmiyhxsEwwmijhwwqyjhwiEyyhyyEyjhyjvFkxmwytjqdAvEsxmiqckvEgxmbqccvEaqcEqcCmFktCwwljqhkmEstCigtAEckvaitCbgskEccmEagscqgamEDEcCEhkmawtDjgxkEgsmaigwsqiimabgwgEgaEgDEiwmbjgywEiigyiEibgybgzjqFAvCsxliqEkvCgxlbqEcvCaqEEvCDqECqEBEFAmCstBighAEEkmCgtBbggkqagvDbggcEEEmCDggEqaDggCEasmDigisEagmDbgigqbbgiaEaDgiDgjigjbqCkvBgxkrqCcvBaqCEvBDqCCqCBECkmBgtArgakECcmBagacqDamBDgaEECCgaCECBEDggbggbagbDvAqvAnqBBmAqEBEgDEgDCgDBlfAspsweyldksowClAlcssoiCkklcgCkcCkECvAlhssqyCtklgwsqjCsslgiCsgCsaCxsliyCwwlijCwiCyyCyjtpkwuwyhjndAtoswuincktogwubncctoancEtoDlFksmwwdjnhklEssmiatACcktqismbaskngglEaascCcEasEChklawsnjaxkCgstrjawsniilabawgCgaawaCiwlbjaywCiiayiCibCjjazjvpAxusyxivokxugyxbvocxuavoExuDvoCnFAtmswtirhAnEkxviwtbrgkvqgxvbrgcnEEtmDrgEvqDnEBCFAlCssliahACEklCgslbixAagknagtnbiwkrigvrblCDiwcagEnaDiwECEBCaslDiaisCaglDbiysaignbbiygrjbCaDaiDCbiajiCbbiziajbvmkxtgywrvmcxtavmExtDvmCvmBnCktlgwsrraknCcxtrracvnatlDraEnCCraCnCBraBCCklBgskraakCCclBaiikaacnDalBDiicrbaCCCiiEaaCCCBaaBCDglBrabgCDaijgabaCDDijaabDCDrijrvlcxsqvlExsnvlCvlBnBctkqrDcnBEtknrDEvlnrDCnBBrDBCBclAqaDcCBElAnibcaDEnBnibErDnCBBibCaDBibBaDqibqibnxsfvkltkfnAmnAlCAoaBoiDoCAlaBlkpkBdAkosBckkogsebBcckoaBcEkoDBhkkqwsfjBgskqiBggkqbBgaBgDBiwkrjBiiBibBjjlpAsuswhiloksuglocsualoEsuDloCBFAkmssdiDhABEksvisdbDgklqgsvbDgcBEEkmDDgElqDBEBBaskniDisBagknbDiglrbDiaBaDBbiDjiBbbDjbtukwxgyirtucwxatuEwxDtuCtuBlmkstgnqklmcstanqctvastDnqElmCnqClmBnqBBCkklgDakBCcstrbikDaclnaklDbicnraBCCbiEDaCBCBDaBBDgklrDbgBDabjgDbaBDDbjaDbDBDrDbrbjrxxcyyqxxEyynxxCxxBttcwwqvvcxxqwwnvvExxnvvCttBvvBllcssqnncllEssnrrcnnEttnrrEvvnllBrrCnnBrrBBBckkqDDcBBEkknbbcDDEllnjjcbbEnnnBBBjjErrnDDBjjCBBqDDqBBnbbqDDnjjqbbnjjnxwoyyfxwmxwltsowwfvtoxwvvtmtslvtllkossfnlolkmrnonlmlklrnmnllrnlBAokkfDBolkvbDoDBmBAljbobDmDBljbmbDljblDBvjbvxwdvsuvstnkurlurltDAubBujDujDtApAAokkegAocAoEAoCAqsAqgAqaAqDAriArbkukkucshakuEshDkuCkuBAmkkdgBqkkvgkdaBqckvaBqEkvDBqCAmBBqBAngkdrBrgkvrBraAnDBrDAnrBrrsxcsxEsxCsxBktclvcsxqsgnlvEsxnlvCktBlvBAlcBncAlEkcnDrcBnEAlCDrEBnCAlBDrCBnBAlqBnqAlnDrqBnnDrnwyowymwylswotxowyvtxmswltxlksosgfltoswvnvoltmkslnvmltlnvlAkokcfBloksvDnoBlmAklbroDnmBllbrmDnlAkvBlvDnvbrvyzeyzdwyexyuwydxytswetwuswdvxutwtvxtkselsuksdntulstrvuypkzewxdAyoszeixckyogzebxccyoaxcEyoDxcCxhkyqwzfjutAxgsyqiuskxggyqbuscxgausExgDusCuxkxiwyrjptAuwsxiipskuwgxibpscuwapsEuwDpsCpxkuywxjjftApwsuyifskpwguybfscpwafsEpwDfxkpywuzjfwspyifwgpybfwafywpzjfyifybxFAymszdixEkymgzdbxEcymaxEEymDxECxEBuhAxasyniugkxagynbugcxaaugExaDugCugBoxAuisxbiowkuigxbbowcuiaowEuiDowCowBdxAoysujidwkoygujbdwcoyadwEoyDdwCdysozidygozbdyadyDdzidzbxCkylgzcrxCcylaxCEylDxCCxCBuakxDgylruacxDauaExDDuaCuaBoikubgxDroicubaoiEubDoiCoiBcykojgubrcycojacyEojDcyCcyBczgojrczaczDczrxBcykqxBEyknxBCxBBuDcxBquDExBnuDCuDBobcuDqobEuDnobCobBcjcobqcjEobncjCcjBcjqcjnxAoykfxAmxAluBoxAvuBmuBloDouBvoDmoDlcbooDvcbmcblxAexAduAuuAtoBuoBtwpAyeszFiwokyegzFbwocyeawoEyeDwoCwoBthAwqsyfitgkwqgyfbtgcwqatgEwqDtgCtgBmxAtiswrimwktigwrbmwctiamwEtiDmwCmwBFxAmystjiFwkmygtjbFwcmyaFwEmyDFwCFysmziFygmzbFyaFyDFziFzbyukzhghjsyuczhahbwyuEzhDhDyyuCyuBwmkydgzErxqkwmczhrxqcyvaydDxqEwmCxqCwmBxqBtakwngydrviktacwnavicxrawnDviEtaCviCtaBviBmiktbgwnrqykmictbaqycvjatbDqyEmiCqyCmiBqyBEykmjgtbrhykEycmjahycqzamjDhyEEyChyCEyBEzgmjrhzgEzahzaEzDhzDEzrytczgqgrwytEzgngnyytCglzytBwlcycqxncwlEycnxnEytnxnCwlBxnBtDcwlqvbctDEwlnvbExnnvbCtDBvbBmbctDqqjcmbEtDnqjEvbnqjCmbBqjBEjcmbqgzcEjEmbngzEqjngzCEjBgzBEjqgzqEjngznysozgfgfyysmgdzyslwkoycfxloysvxlmwklxlltBowkvvDotBmvDmtBlvDlmDotBvqbovDvqbmmDlqblEbomDvgjoEbmgjmEblgjlEbvgjvysegFzysdwkexkuwkdxkttAuvButAtvBtmBuqDumBtqDtEDugbuEDtgbtysFwkFxkhtAhvAxmAxqBxwekyFgzCrwecyFaweEyFDweCweBsqkwfgyFrsqcwfasqEwfDsqCsqBliksrgwfrlicsraliEsrDliCliBCykljgsrrCycljaCyEljDCyCCyBCzgljrCzaCzDCzryhczaqarwyhEzananyyhCalzyhBwdcyEqwvcwdEyEnwvEyhnwvCwdBwvBsncwdqtrcsnEwdntrEwvntrCsnBtrBlbcsnqnjclbEsnnnjEtrnnjClbBnjBCjclbqazcCjElbnazEnjnazCCjBazBCjqazqCjnaznzioirsrfyziminwrdzzililyikzygozafafyyxozivivyadzyxmyglitzyxlwcoyEfwtowcmxvoyxvwclxvmwtlxvlslowcvtnoslmvrotnmsllvrmtnlvrllDoslvnbolDmrjonbmlDlrjmnblrjlCbolDvajoCbmizoajmCblizmajlizlCbvajvzieifwrFzzididyiczygeaFzywuygdihzywtwcewsuwcdxtuwstxttskutlusktvnutltvntlBunDulBtrbunDtrbtCDuabuCDtijuabtijtziFiFyiEzygFywhwcFwshxsxskhtkxvlxlAxnBxrDxCBxaDxibxiCzwFcyCqwFEyCnwFCwFBsfcwFqsfEwFnsfCsfBkrcsfqkrEsfnkrCkrBBjckrqBjEkrnBjCBjBBjqBjnyaozDfDfyyamDdzyalwEoyCfwhowEmwhmwElwhlsdowEvsvosdmsvmsdlsvlknosdvlroknmlrmknllrlBboknvDjoBbmDjmBblDjlBbvDjvzbebfwnpzzbdbdybczyaeDFzyiuyadbhzyitwEewguwEdwxuwgtwxtscustuscttvustttvtklulnukltnrulntnrtBDuDbuBDtbjuDbtbjtjfsrpyjdwrozjcyjcjzbFbFyzjhjhybEzjgzyaFyihyyxwEFwghwwxxxxschssxttxvvxkkxllxnnxrrxBBxDDxbbxjFwrmzjEyjEjbCzjazjCyjCjjBjwCowCmwClsFowCvsFmsFlkfosFvkfmkflArokfvArmArlArvyDeBpzyDdwCewauwCdwatsEushusEtshtkdukvukdtkvtAnuBruAntBrtzDpDpyDozyDFybhwCFwahwixsEhsgxsxxkcxktxlvxAlxBnxDrxbpwnuzboybojDmzbqzjpsruyjowrujjoijobbmyjqybmjjqjjmwrtjjmijmbbljjnjjlijlbjkrsCusCtkFukFtAfuAftwDhsChsaxkExkhxAdxAvxBuzDuyDujbuwnxjbuibubDtjbvjjusrxijugrxbjuajuDbtijvibtbjvbjtgrwrjtajtDbsrjtrjsqjsnBxjDxiDxbbxgnyrbxabxDDwrbxrbwqbwnpjkurwejApbsunyebkpDwulzeDspByeBwzfcfjkprwzfEfbspnyzfCfDwplzzfBfByyrczfqfrwyrEzfnfnyyrCflzyrBxjcyrqxjEyrnxjCxjBuzcxjquzExjnuzCuzBpzcuzqpzEuznpzCdjAorsufydbkonwudzdDsolydBwokzdAyzdodrsovyzdmdnwotzzdldlydkzynozdvdvyynmdtzynlxboynvxbmxblujoxbvujmujlozoujvozmozlcrkofwuFzcnsodyclwoczckyckjzcucvwohzzctctycszylucxzyltxDuxDtubuubtojuojtcfsoFycdwoEzccyccjzchchycgzykxxBxuDxcFwoCzcEycEjcazcCycCjFjAmrstfyFbkmnwtdzFDsmlyFBwmkzFAyzFoFrsmvyzFmFnwmtzzFlFlyFkzyfozFvFvyyfmFtzyflwroyfvwrmwrltjowrvtjmtjlmzotjvmzmmzlqrkvfwxpzhbAqnsvdyhDkqlwvczhBsqkyhAwqkjhAiErkmfwtFzhrkEnsmdyhnsqtymczhlwEkyhkyEkjhkjzEuEvwmhzzhuzEthvwEtyzhthtyEszhszyduExzyvuydthxzyvtwnuxruwntxrttbuvjutbtvjtmjumjtgrAqfsvFygnkqdwvEzglsqcygkwqcjgkigkbEfsmFygvsEdwmEzgtwqgzgsyEcjgsjzEhEhyzgxgxyEgzgwzycxytxwlxxnxtDxvbxmbxgfkqFwvCzgdsqEygcwqEjgcigcbEFwmCzghwEEyggyEEjggjEazgizgFsqCygEwqCjgEigEbECygayECjgajgCwqBjgCigCbEBjgDjgBigBbCrklfwspzCnsldyClwlczCkyCkjzCuCvwlhzzCtCtyCszyFuCxzyFtwfuwftsrusrtljuljtarAnfstpyankndwtozalsncyakwncjakiakbCfslFyavsCdwlEzatwngzasyCcjasjzChChyzaxaxyCgzawzyExyhxwdxwvxsnxtrxlbxrfkvpwxuzinArdsvoyilkrcwvojiksrciikgrcbikaafknFwtmzivkadsnEyitsrgynEjiswaciisiacbisbCFwlCzahwCEyixwagyCEjiwyagjiwjCazaiziyzifArFsvmyidkrEwvmjicsrEiicgrEbicaicDaFsnCyihsaEwnCjigwrajigiaEbigbCCyaayCCjiiyaajiijiFkrCwvljiEsrCiiEgrCbiEaiEDaCwnBjiawaCiiaiaCbiabCBjaDjibjiCsrBiiCgrBbiCaiCDaBiiDiaBbiDbiBgrAriBaiBDaAriBriAqiAnBfskpyBdwkozBcyBcjBhyBgzyCxwFxsfxkrxDfklpwsuzDdsloyDcwlojDciDcbBFwkmzDhwBEyDgyBEjDgjBazDizbfAnpstuybdknowtujbcsnoibcgnobbcabcDDFslmybhsDEwlmjbgwDEibgiDEbbgbBCyDayBCjbiyDajbijrpkvuwxxjjdArosvuijckrogvubjccroajcEroDjcCbFknmwttjjhkbEsnmijgsrqinmbjggbEajgabEDjgDDCwlljbawDCijiwbaiDCbjiibabjibBBjDDjbbjjjjjFArmsvtijEkrmgvtbjEcrmajEErmDjECjEBbCsnlijasbCgnlbjagrnbjaabCDjaDDBibDiDBbjbibDbjbbjCkrlgvsrjCcrlajCErlDjCCjCBbBgnkrjDgbBajDabBDjDDDArbBrjDrjBcrkqjBErknjBCjBBbAqjBqbAnjBnjAorkfjAmjAlbAfjAvApwkezAoyAojAqzBpskuyBowkujBoiBobAmyBqyAmjBqjDpkluwsxjDosluiDoglubDoaDoDBmwktjDqwBmiDqiBmbDqbAljBnjDrjbpAnustxiboknugtxbbocnuaboEnuDboCboBDmsltibqsDmgltbbqgnvbbqaDmDbqDBliDniBlbbriDnbbrbrukvxgxyrrucvxaruEvxDruCruBbmkntgtwrjqkbmcntajqcrvantDjqEbmCjqCbmBjqBDlglsrbngDlajrgbnaDlDjrabnDjrDBkrDlrbnrjrrrtcvwqrtEvwnrtCrtBblcnsqjncblEnsnjnErtnjnCblBjnBDkqblqDknjnqblnjnnrsovwfrsmrslbkonsfjlobkmjlmbkljllDkfbkvjlvrsersdbkejkubkdjktAeyAejAuwkhjAuiAubAdjAvjBuskxiBugkxbBuaBuDAtiBviAtbBvbDuklxgsyrDuclxaDuElxDDuCDuBBtgkwrDvglxrDvaBtDDvDAsrBtrDvrnxctyqnxEtynnxCnxBDtclwqbvcnxqlwnbvEDtCbvCDtBbvBBsqDtqBsnbvqDtnbvnvyoxzfvymvylnwotyfrxonwmrxmnwlrxlDsolwfbtoDsmjvobtmDsljvmbtljvlBsfDsvbtvjvvvyevydnwerwunwdrwtDsebsuDsdjtubstjttvyFnwFrwhDsFbshjsxAhiAhbAxgkirAxaAxDAgrAxrBxckyqBxEkynBxCBxBAwqBxqAwnBxnlyoszflymlylBwokyfDxolyvDxmBwlDxlAwfBwvDxvtzetzdlyenyulydnytBweDwuBwdbxuDwtbxttzFlyFnyhBwFDwhbwxAiqAinAyokjfAymAylAifAyvkzekzdAyeByuAydBytszp"
+
+var PATTERN_CHARS = "ABCDEFabcdefghijklmnopqrstuvwxyz"
+var START = "1111111101010100" + "01"
+var STOP = "11111101000101001"
+var SEPARATOR = "01"
+var MODULE_PX = 10   // the scale the old zint build used
+var ROW_MODULES = 3
+
+var TEX = 900, BYT = 901
+var LATCH_TEXT = 900, PAD = 900, LATCH_BYTE = 901, LATCH_BYTE6 = 924, SHIFT_BYTE = 913
+
+// ---------------- text compaction (textprocess) ----------------
+
+// Sub-mode tables: 1 upper, 2 lower, 4 mixed, 8 punctuation. ASCII_TABLES is a bit mask of
+// the tables each character (32..126) belongs to, ASCII_VALUES its value in those tables.
+var ASCII_TABLES = [7, 8, 8, 4, 12, 4, 4, 8, 8, 8, 12, 4, 12, 12, 12, 12, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 12, 8, 8, 4, 8, 8, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 8, 8, 8, 4, 8, 8, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 8, 8, 8, 8]
+var ASCII_VALUES = [26, 10, 20, 15, 18, 21, 10, 28, 23, 24, 22, 20, 13, 16, 17, 19, 0, 1, 2, 3,
+    4, 5, 6, 7, 8, 9, 14, 0, 1, 23, 2, 25, 3, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 4, 5, 6, 24, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 21, 27, 9]
+// latch codes from table -> table
+var SWITCH = {
+    1: { 2: [27], 4: [28], 8: [28, 25] },
+    2: { 1: [28, 28], 4: [28], 8: [28, 25] },
+    4: { 1: [28], 2: [27], 8: [25] },
+    8: { 1: [29], 2: [29, 27], 4: [29, 28] }
+}
+
+function charTables(c) {
+    if (c == 9) return [12, 12]
+    if (c == 10) return [8, 15]
+    if (c == 13) return [12, 11]
+    return [ASCII_TABLES[c - 32], ASCII_VALUES[c - 32]]
+}
+
+function textProcess(bytes, out) {
+    var list = bytes.map(charTables), v = [], cur = 1
+    for (var j = 0; j < list.length; j++) {
+        var t = list[j][0], val = list[j][1]
+        if (t & cur) {
+            v.push(val)
+            continue
+        }
+        var next = j + 1 < list.length ? list[j + 1][0] : 0
+        // only this one character needs another table: try a one-character shift
+        if (j == list.length - 1 || !(t & next)) {
+            if ((t & 1) && cur == 2) { v.push(27, val); continue }
+            if (t & 8) { v.push(29, val); continue }
+        }
+        var nt = (j < list.length - 1 && (t & next)) ? (t & next) : t
+        // keep the first table if several are possible
+        nt = (nt & 1) ? 1 : (nt & 2) ? 2 : (nt & 4) ? 4 : 8
+        v = v.concat(SWITCH[cur][nt])
+        cur = nt
+        v.push(val)
+    }
+    if (v.length % 2)
+        v.push(29)
+    out.push(LATCH_TEXT)
+    for (var k = 0; k < v.length; k += 2)
+        out.push(v[k] * 30 + v[k + 1])
+}
+
+// ---------------- byte compaction (byteprocess) ----------------
+
+function byteProcess(bytes, out) {
+    if (bytes.length == 1) {
+        out.push(SHIFT_BYTE, bytes[0])
+        return
+    }
+    out.push(bytes.length % 6 == 0 ? LATCH_BYTE6 : LATCH_BYTE)
+    var i = 0
+    for (; i + 6 <= bytes.length; i += 6) {
+        var total = 0  // 48 bits, exact in a double
+        for (var j = 0; j < 6; j++)
+            total = total * 256 + bytes[i + j]
+        var cw = []
+        for (var j = 0; j < 5; j++) {
+            cw.unshift(total % 900)
+            total = Math.floor(total / 900)
+        }
+        out.push.apply(out, cw)
+    }
+    for (; i < bytes.length; i++)
+        out.push(bytes[i])
+}
+
+// ---------------- mode blocks (quelmode, pdfsmooth, regroupe) ----------------
+
+function quelmode(c) {
+    return (c == 9 || c == 10 || c == 13 || (c >= 32 && c <= 126)) ? TEX : BYT
+}
+
+function regroupe(list) {
+    for (var i = 1; i < list.length; i++)
+        if (list[i - 1].mode == list[i].mode) {
+            list[i - 1].len += list[i].len
+            list.splice(i, 1)
+            i--
+        }
+}
+
+function blocks(bytes) {
+    var list = []
+    bytes.forEach(function(c) {
+        var m = quelmode(c)
+        if (list.length && list[list.length - 1].mode == m)
+            list[list.length - 1].len++
+        else
+            list.push({ mode: m, len: 1 })
+    })
+    // pdfsmooth: short text blocks between byte blocks become bytes
+    // (its rules for numeric blocks never apply: quelmode never returns numeric)
+    regroupe(list)
+    for (var i = 1; i < list.length; i++) {
+        var b = list[i], last = list[i - 1].mode, next = i < list.length - 1 ? list[i + 1].mode : null
+        if (b.mode != TEX)
+            continue
+        if (i == list.length - 1) {
+            if (last == BYT && b.len == 1) b.mode = BYT
+        } else {
+            if (last == BYT && next == BYT && b.len < 5) b.mode = BYT
+            if (((last == BYT && next != BYT) || (last != BYT && next == BYT)) && b.len < 3) b.mode = BYT
+        }
+    }
+    regroupe(list)
+    return list
+}
+
+function dataCodewords(bytes) {
+    var out = [], pos = 0
+    blocks(bytes).forEach(function(b) {
+        var part = bytes.slice(pos, pos + b.len)
+        if (b.mode == TEX) textProcess(part, out)
+        else byteProcess(part, out)
+        pos += b.len
+    })
+    return out
+}
+
+// ---------------- error correction ----------------
+
+// Reed-Solomon over GF(929), generator (x - 3)(x - 3^2)...(x - 3^k)
+function eccCoefficients(k) {
+    var g = [1], p = 1
+    for (var i = 1; i <= k; i++) {
+        p = (p * 3) % 929
+        var n = new Array(g.length + 1).fill(0)
+        for (var j = 0; j < g.length; j++) {
+            n[j + 1] = (n[j + 1] + g[j]) % 929
+            n[j] = (n[j] + 929 - (g[j] * p) % 929) % 929
+        }
+        g = n
+    }
+    return g.slice(0, k)  // low order first, leading 1 dropped
+}
+
+function eccCodewords(data, level) {
+    var k = 2 << level, coef = eccCoefficients(k), e = new Array(k).fill(0)
+    data.forEach(function(d) {
+        var t = (d + e[k - 1]) % 929
+        for (var j = k - 1; j > 0; j--)
+            e[j] = (e[j - 1] + 929 - (t * coef[j]) % 929) % 929
+        e[0] = (929 - (t * coef[0]) % 929) % 929
+    })
+    var out = []
+    for (var i = k - 1; i >= 0; i--)
+        out.push(e[i] ? 929 - e[i] : 0)
+    return out
+}
+
+// ---------------- symbol ----------------
+
+function utf8Bytes(s) {
+    var out = [], str = unescape(encodeURIComponent(s))
+    for (var i = 0; i < str.length; i++)
+        out.push(str.charCodeAt(i))
+    return out
+}
+
+// opts: ecc (-1 auto, 0..8), cols (0 auto, 1..30), rows (fixed row count, optional),
+//       truncated (bool). Returns { cols, rows, ecc, codewords } (codewords include ECC).
+function encode(text, opts) {
+    var cw = dataCodewords(utf8Bytes(text))
+    var ecc = opts.ecc, cols = opts.cols
+    if (ecc < -1 || ecc > 8) ecc = -1
+    if (cols < 0 || cols > 30) cols = 0
+    if (ecc < 0) {
+        ecc = 6
+        if (cw.length <= 863) ecc = 5
+        if (cw.length <= 320) ecc = 4
+        if (cw.length <= 160) ecc = 3
+        if (cw.length <= 40) ecc = 2
+    }
+    var k = 2 << ecc
+    if (cols < 1)
+        cols = Math.floor(0.5 + Math.sqrt((cw.length + k) / 3))
+    if (Math.floor((cw.length + k) / cols) > 90)
+        cols++  // stop the symbol from becoming too high
+    if (cw.length + k > 928)
+        throw new Error("Dữ liệu quá dài cho PDF417")
+    if (Math.floor((cw.length + k) / cols) > 90)
+        throw new Error("Dữ liệu quá dài cho số cột đã chọn")
+
+    var len = cw.length + 1 + k, pad = 0
+    if (opts.rows) {
+        if (len > cols * opts.rows)
+            throw new Error("Dữ liệu quá dài cho mẫu này (" + (len - k) + "/" + (cols * opts.rows - k) + " codeword)")
+        pad = cols * opts.rows - len
+    }
+    else if (Math.floor(len / cols) < 3)
+        pad = cols * 3 - len  // at least three rows
+    else if (len % cols)
+        pad = cols - len % cols
+    while (pad-- > 0)
+        cw.push(PAD)
+    cw.unshift(cw.length + 1)  // length descriptor
+    cw = cw.concat(eccCodewords(cw, ecc))
+    return { cols: cols, rows: cw.length / cols, ecc: ecc, codewords: cw }
+}
+
+function codewordBits(cluster, value) {
+    var s = PATTERNS.substr((cluster * 929 + value) * 3, 3), b = ""
+    for (var i = 0; i < 3; i++)
+        b += (32 + PATTERN_CHARS.indexOf(s.charAt(i))).toString(2).substr(1)
+    return b + SEPARATOR
+}
+
+// module rows, "1" = bar
+function rowBits(sym, truncated) {
+    var cols = sym.cols, rows = sym.rows, cw = sym.codewords
+    var c1 = Math.floor((rows - 1) / 3), c2 = sym.ecc * 3 + (rows - 1) % 3, c3 = cols - 1
+    var out = []
+    for (var i = 0; i < rows; i++) {
+        var k = Math.floor(i / 3) * 30, cl = i % 3
+        var bits = START + codewordBits(cl, k + [c1, c2, c3][cl])
+        for (var j = 0; j < cols; j++)
+            bits += codewordBits(cl, cw[i * cols + j])
+        if (!truncated)
+            bits += codewordBits(cl, k + [c3, c1, c2][cl]) + STOP
+        out.push(bits)
+    }
+    return out
+}
+
+function svg(text, opts) {
+    var lines = rowBits(encode(text, opts), opts.truncated)
+    var w = lines[0].length * MODULE_PX, rh = ROW_MODULES * MODULE_PX, h = lines.length * rh
+    var s = '<svg width="' + w + '" height="' + h + '" version="1.1" xmlns="http://www.w3.org/2000/svg">\n'
+          + '<g id="barcode" fill="#000000">\n'
+          + '<rect x="0" y="0" width="' + w + '" height="' + h + '" fill="#FFFFFF" />\n'
+    lines.forEach(function(b, r) {
+        var re = /1+/g, m
+        while ((m = re.exec(b)))
+            s += '<rect x="' + m.index * MODULE_PX + '" y="' + r * rh + '" width="' + m[0].length * MODULE_PX
+               + '" height="' + rh + '" />\n'
+    })
+    return s + '</g>\n</svg>\n'
+}
+
+return { encode: encode, rowBits: rowBits, svg: svg }
+})()
+
+</script>
+<script>
+// Small QR Code encoder (ISO/IEC 18004), following Nayuki's QR Code generator (MIT).
+// The caller gives the data as a list of parts; each part becomes one segment whose mode
+// (numeric / alphanumeric / byte) is chosen from that part alone, like a check-in app that
+// builds its QR string piece by piece. The smallest version that fits is used, and the mask
+// with the lowest penalty is chosen.
+// Option unmaskedRemainder leaves the remainder bits (modules after the last codeword) light
+// instead of masking them, as the Vietjet check-in QR codes do. Readers ignore those bits.
+"use strict"
+
+var QrEncoder = (function() {
+
+var MODULE_PX = 10
+var QUIET_ZONE = 4
+
+var ECL = { L: { ordinal: 0, bits: 1 }, M: { ordinal: 1, bits: 0 }, Q: { ordinal: 2, bits: 3 }, H: { ordinal: 3, bits: 2 } }
+
+var ECC_CODEWORDS_PER_BLOCK = [
+    [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
+    [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30]
+]
+var NUM_ERROR_CORRECTION_BLOCKS = [
+    [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],
+    [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
+    [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],
+    [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81]
+]
+
+// ---------------- segments ----------------
+
+var ALPHANUMERIC_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
+var MODE = {
+    NUMERIC:      { bits: 0x1, cc: [10, 12, 14] },
+    ALPHANUMERIC: { bits: 0x2, cc: [9, 11, 13] },
+    BYTE:         { bits: 0x4, cc: [8, 16, 16] }
+}
+
+function appendBits(val, len, bb) {
+    for (var i = len - 1; i >= 0; i--)
+        bb.push((val >>> i) & 1)
+}
+
+function utf8Bytes(s) {
+    var out = [], str = unescape(encodeURIComponent(s))
+    for (var i = 0; i < str.length; i++)
+        out.push(str.charCodeAt(i))
+    return out
+}
+
+// one segment for the whole part, in the most compact mode that can hold all of it
+function makeSegment(text) {
+    var bb = []
+    if (/^[0-9]*$/.test(text)) {
+        for (var i = 0; i < text.length; ) {
+            var n = Math.min(text.length - i, 3)
+            appendBits(parseInt(text.substr(i, n), 10), n * 3 + 1, bb)
+            i += n
+        }
+        return { mode: MODE.NUMERIC, numChars: text.length, data: bb }
+    }
+    var isAlnum = true
+    for (var k = 0; k < text.length; k++)
+        if (ALPHANUMERIC_CHARSET.indexOf(text.charAt(k)) < 0) isAlnum = false
+    if (isAlnum) {
+        var j
+        for (j = 0; j + 2 <= text.length; j += 2)
+            appendBits(ALPHANUMERIC_CHARSET.indexOf(text.charAt(j)) * 45 + ALPHANUMERIC_CHARSET.indexOf(text.charAt(j + 1)), 11, bb)
+        if (j < text.length)
+            appendBits(ALPHANUMERIC_CHARSET.indexOf(text.charAt(j)), 6, bb)
+        return { mode: MODE.ALPHANUMERIC, numChars: text.length, data: bb }
+    }
+    var bytes = utf8Bytes(text)
+    bytes.forEach(function(b) { appendBits(b, 8, bb) })
+    return { mode: MODE.BYTE, numChars: bytes.length, data: bb }
+}
+
+function ccBits(mode, ver) {
+    return mode.cc[Math.floor((ver + 7) / 17)]
+}
+
+function totalBits(segs, ver) {
+    var result = 0
+    for (var i = 0; i < segs.length; i++) {
+        var cc = ccBits(segs[i].mode, ver)
+        if (segs[i].numChars >= (1 << cc))
+            return Infinity
+        result += 4 + cc + segs[i].data.length
+    }
+    return result
+}
+
+// ---------------- error correction ----------------
+
+function numRawDataModules(ver) {
+    var result = (16 * ver + 128) * ver + 64
+    if (ver >= 2) {
+        var numAlign = Math.floor(ver / 7) + 2
+        result -= (25 * numAlign - 10) * numAlign - 55
+        if (ver >= 7)
+            result -= 36
+    }
+    return result
+}
+
+function numDataCodewords(ver, ecl) {
+    return Math.floor(numRawDataModules(ver) / 8)
+        - ECC_CODEWORDS_PER_BLOCK[ecl.ordinal][ver] * NUM_ERROR_CORRECTION_BLOCKS[ecl.ordinal][ver]
+}
+
+function rsMultiply(x, y) {
+    var z = 0
+    for (var i = 7; i >= 0; i--) {
+        z = (z << 1) ^ ((z >>> 7) * 0x11D)
+        z ^= ((y >>> i) & 1) * x
+    }
+    return z
+}
+
+function rsDivisor(degree) {
+    var result = []
+    for (var i = 0; i < degree - 1; i++)
+        result.push(0)
+    result.push(1)
+    var root = 1
+    for (var i = 0; i < degree; i++) {
+        for (var j = 0; j < result.length; j++) {
+            result[j] = rsMultiply(result[j], root)
+            if (j + 1 < result.length)
+                result[j] ^= result[j + 1]
+        }
+        root = rsMultiply(root, 0x02)
+    }
+    return result
+}
+
+function rsRemainder(data, divisor) {
+    var result = divisor.map(function() { return 0 })
+    data.forEach(function(b) {
+        var factor = b ^ result.shift()
+        result.push(0)
+        divisor.forEach(function(coef, i) { result[i] ^= rsMultiply(coef, factor) })
+    })
+    return result
+}
+
+function addEccAndInterleave(data, ver, ecl) {
+    var numBlocks = NUM_ERROR_CORRECTION_BLOCKS[ecl.ordinal][ver]
+    var blockEccLen = ECC_CODEWORDS_PER_BLOCK[ecl.ordinal][ver]
+    var rawCodewords = Math.floor(numRawDataModules(ver) / 8)
+    var numShortBlocks = numBlocks - rawCodewords % numBlocks
+    var shortBlockLen = Math.floor(rawCodewords / numBlocks)
+
+    var blocks = [], divisor = rsDivisor(blockEccLen)
+    for (var i = 0, k = 0; i < numBlocks; i++) {
+        var dat = data.slice(k, k + shortBlockLen - blockEccLen + (i < numShortBlocks ? 0 : 1))
+        k += dat.length
+        var ecc = rsRemainder(dat, divisor)
+        if (i < numShortBlocks)
+            dat.push(0)
+        blocks.push(dat.concat(ecc))
+    }
+    var result = []
+    for (var i = 0; i < blocks[0].length; i++)
+        blocks.forEach(function(block, j) {
+            if (i != shortBlockLen - blockEccLen || j >= numShortBlocks)
+                result.push(block[i])
+        })
+    return result
+}
+
+// ---------------- matrix ----------------
+
+function Matrix(ver) {
+    this.size = ver * 4 + 17
+    this.modules = []
+    this.isFunction = []
+    for (var i = 0; i < this.size; i++) {
+        this.modules.push(new Array(this.size).fill(false))
+        this.isFunction.push(new Array(this.size).fill(false))
+    }
+    this.isRemainder = {}  // "x,y" of modules not covered by codewords
+}
+Matrix.prototype.setFunction = function(x, y, dark) {
+    this.modules[y][x] = dark
+    this.isFunction[y][x] = true
+}
+
+function getBit(x, i) {
+    return ((x >>> i) & 1) != 0
+}
+
+function alignmentPositions(ver, size) {
+    if (ver == 1)
+        return []
+    var numAlign = Math.floor(ver / 7) + 2
+    var step = Math.floor((ver * 8 + numAlign * 3 + 5) / (numAlign * 4 - 4)) * 2
+    var result = [6]
+    for (var pos = size - 7; result.length < numAlign; pos -= step)
+        result.splice(1, 0, pos)
+    return result
+}
+
+function drawFormatBits(m, ecl, mask) {
+    var data = ecl.bits << 3 | mask
+    var rem = data
+    for (var i = 0; i < 10; i++)
+        rem = (rem << 1) ^ ((rem >>> 9) * 0x537)
+    var bits = (data << 10 | rem) ^ 0x5412
+    for (var i = 0; i <= 5; i++)
+        m.setFunction(8, i, getBit(bits, i))
+    m.setFunction(8, 7, getBit(bits, 6))
+    m.setFunction(8, 8, getBit(bits, 7))
+    m.setFunction(7, 8, getBit(bits, 8))
+    for (var i = 9; i < 15; i++)
+        m.setFunction(14 - i, 8, getBit(bits, i))
+    for (var i = 0; i < 8; i++)
+        m.setFunction(m.size - 1 - i, 8, getBit(bits, i))
+    for (var i = 8; i < 15; i++)
+        m.setFunction(8, m.size - 15 + i, getBit(bits, i))
+    m.setFunction(8, m.size - 8, true)  // always dark
+}
+
+function drawFunctionPatterns(m, ver, ecl) {
+    var size = m.size
+    for (var i = 0; i < size; i++) {
+        m.setFunction(6, i, i % 2 == 0)
+        m.setFunction(i, 6, i % 2 == 0)
+    }
+    ;[[3, 3], [size - 4, 3], [3, size - 4]].forEach(function(c) {
+        for (var dy = -4; dy <= 4; dy++)
+            for (var dx = -4; dx <= 4; dx++) {
+                var dist = Math.max(Math.abs(dx), Math.abs(dy)), xx = c[0] + dx, yy = c[1] + dy
+                if (xx >= 0 && xx < size && yy >= 0 && yy < size)
+                    m.setFunction(xx, yy, dist != 2 && dist != 4)
+            }
+    })
+    var pos = alignmentPositions(ver, size), n = pos.length
+    for (var i = 0; i < n; i++)
+        for (var j = 0; j < n; j++) {
+            if ((i == 0 && j == 0) || (i == 0 && j == n - 1) || (i == n - 1 && j == 0))
+                continue
+            for (var dy = -2; dy <= 2; dy++)
+                for (var dx = -2; dx <= 2; dx++)
+                    m.setFunction(pos[i] + dx, pos[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) != 1)
+        }
+    drawFormatBits(m, ecl, 0)  // placeholder, redrawn after choosing the mask
+    if (ver >= 7) {
+        var rem = ver
+        for (var i = 0; i < 12; i++)
+            rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25)
+        var bits = ver << 12 | rem
+        for (var i = 0; i < 18; i++) {
+            var a = size - 11 + i % 3, b = Math.floor(i / 3)
+            m.setFunction(a, b, getBit(bits, i))
+            m.setFunction(b, a, getBit(bits, i))
+        }
+    }
+}
+
+function drawCodewords(m, data) {
+    var i = 0, size = m.size
+    for (var right = size - 1; right >= 1; right -= 2) {
+        if (right == 6)
+            right = 5
+        for (var vert = 0; vert < size; vert++)
+            for (var j = 0; j < 2; j++) {
+                var x = right - j
+                var upward = ((right + 1) & 2) == 0
+                var y = upward ? size - 1 - vert : vert
+                if (m.isFunction[y][x])
+                    continue
+                if (i < data.length * 8) {
+                    m.modules[y][x] = getBit(data[i >>> 3], 7 - (i & 7))
+                    i++
+                }
+                else
+                    m.isRemainder[x + ',' + y] = true
+            }
+    }
+}
+
+function maskInvert(mask, x, y) {
+    switch (mask) {
+        case 0: return (x + y) % 2 == 0
+        case 1: return y % 2 == 0
+        case 2: return x % 3 == 0
+        case 3: return (x + y) % 3 == 0
+        case 4: return (Math.floor(x / 3) + Math.floor(y / 2)) % 2 == 0
+        case 5: return x * y % 2 + x * y % 3 == 0
+        case 6: return (x * y % 2 + x * y % 3) % 2 == 0
+        default: return ((x + y) % 2 + x * y % 3) % 2 == 0
+    }
+}
+
+function applyMask(m, mask, unmaskedRemainder) {
+    for (var y = 0; y < m.size; y++)
+        for (var x = 0; x < m.size; x++)
+            if (!m.isFunction[y][x] && maskInvert(mask, x, y) && !(unmaskedRemainder && m.isRemainder[x + ',' + y]))
+                m.modules[y][x] = !m.modules[y][x]
+}
+
+// ---------------- mask penalty ----------------
+
+function penaltyScore(m) {
+    var size = m.size, result = 0
+
+    function addHistory(runLength, history) {
+        if (history[0] == 0)
+            runLength += size  // light border before the first run
+        history.pop()
+        history.unshift(runLength)
+    }
+    function countPatterns(h) {
+        var n = h[1]
+        var core = n > 0 && h[2] == n && h[3] == n * 3 && h[4] == n && h[5] == n
+        return (core && h[0] >= n * 4 && h[6] >= n ? 1 : 0) + (core && h[6] >= n * 4 && h[0] >= n ? 1 : 0)
+    }
+    function terminateAndCount(color, runLength, history) {
+        if (color) {
+            addHistory(runLength, history)
+            runLength = 0
+        }
+        runLength += size
+        addHistory(runLength, history)
+        return countPatterns(history)
+    }
+    function scanLine(get) {
+        var color = false, run = 0, history = [0, 0, 0, 0, 0, 0, 0]
+        for (var i = 0; i < size; i++) {
+            if (get(i) == color) {
+                run++
+                if (run == 5) result += 3
+                else if (run > 5) result++
+            } else {
+                addHistory(run, history)
+                if (!color)
+                    result += countPatterns(history) * 40
+                color = get(i)
+                run = 1
+            }
+        }
+        result += terminateAndCount(color, run, history) * 40
+    }
+
+    for (var y = 0; y < size; y++)
+        scanLine(function(x) { return m.modules[y][x] })
+    for (var x = 0; x < size; x++)
+        scanLine(function(y) { return m.modules[y][x] })
+
+    for (var y = 0; y < size - 1; y++)
+        for (var x = 0; x < size - 1; x++) {
+            var c = m.modules[y][x]
+            if (c == m.modules[y][x + 1] && c == m.modules[y + 1][x] && c == m.modules[y + 1][x + 1])
+                result += 3
+        }
+
+    var dark = 0
+    m.modules.forEach(function(row) { row.forEach(function(c) { if (c) dark++ }) })
+    var total = size * size
+    var k = Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1
+    return result + k * 10
+}
+
+// ---------------- encode ----------------
+
+// parts: array of strings, one segment each. Returns { version, ecl, mask, size, modules }
+function encode(parts, eclName, opts) {
+    var unmaskedRemainder = !!(opts && opts.unmaskedRemainder)
+    var ecl = ECL[eclName]
+    var segs = parts.filter(function(p) { return p.length > 0 }).map(makeSegment)
+    var ver, used
+    for (ver = 1; ; ver++) {
+        if (ver > 40)
+            throw new Error("Dữ liệu quá dài cho mã QR")
+        used = totalBits(segs, ver)
+        if (used <= numDataCodewords(ver, ecl) * 8)
+            break
+    }
+
+    var bb = []
+    segs.forEach(function(seg) {
+        appendBits(seg.mode.bits, 4, bb)
+        appendBits(seg.numChars, ccBits(seg.mode, ver), bb)
+        bb.push.apply(bb, seg.data)
+    })
+    var capacity = numDataCodewords(ver, ecl) * 8
+    appendBits(0, Math.min(4, capacity - bb.length), bb)
+    appendBits(0, (8 - bb.length % 8) % 8, bb)
+    for (var pad = 0xEC; bb.length < capacity; pad ^= 0xEC ^ 0x11)
+        appendBits(pad, 8, bb)
+    var data = []
+    for (var i = 0; i < bb.length; i += 8) {
+        var b = 0
+        for (var j = 0; j < 8; j++)
+            b = (b << 1) | bb[i + j]
+        data.push(b)
+    }
+
+    var m = new Matrix(ver)
+    drawFunctionPatterns(m, ver, ecl)
+    drawCodewords(m, addEccAndInterleave(data, ver, ecl))
+
+    var best = 0, minPenalty = Infinity
+    for (var i = 0; i < 8; i++) {
+        applyMask(m, i, unmaskedRemainder)
+        drawFormatBits(m, ecl, i)
+        var p = penaltyScore(m)
+        if (p < minPenalty) {
+            best = i
+            minPenalty = p
+        }
+        applyMask(m, i, unmaskedRemainder)  // undo
+    }
+    applyMask(m, best, unmaskedRemainder)
+    drawFormatBits(m, ecl, best)
+    return { version: ver, ecl: eclName, mask: best, size: m.size, modules: m.modules }
+}
+
+function svg(parts, eclName, opts) {
+    var q = encode(parts, eclName, opts)
+    var n = q.size + QUIET_ZONE * 2, w = n * MODULE_PX
+    var s = '<svg width="' + w + '" height="' + w + '" version="1.1" xmlns="http://www.w3.org/2000/svg">\n'
+          + '<g id="barcode" fill="#000000">\n'
+          + '<rect x="0" y="0" width="' + w + '" height="' + w + '" fill="#FFFFFF" />\n'
+    q.modules.forEach(function(row, y) {
+        for (var x = 0; x < q.size; ) {
+            if (!row[x]) { x++; continue }
+            var x0 = x
+            while (x < q.size && row[x])
+                x++
+            s += '<rect x="' + (x0 + QUIET_ZONE) * MODULE_PX + '" y="' + (y + QUIET_ZONE) * MODULE_PX
+               + '" width="' + (x - x0) * MODULE_PX + '" height="' + MODULE_PX + '" />\n'
+        }
+    })
+    return s + '</g>\n</svg>\n'
+}
+
+return { encode: encode, svg: svg }
+})()
+
+</script>
+<style>
+body, input, textarea, select, button {
+    font-family: monospace;
+}
+body {
+    margin: 0;
+    padding: 12px 16px;
+    background: #fff;
+    color: #222;
+}
+input, #classSel {
+    font-size: 130%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+#errMsg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    color: red;
+    font-size: 130%;
+    background-color: #fee;
+    text-align: center;
+    width: 96%;
+    padding: 4px;
+    border: red solid 1px;
+    visibility: hidden;
+    max-width: 500px;
+    z-index: 10;
+}
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: 24px;
+    align-items: start;
+}
+@media (max-width: 800px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+}
+.panel {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px 16px 16px;
+}
+.panel h2 {
+    font-size: 120%;
+    margin: 0 0 6px;
+}
+#theimg2 {
+   visibility: hidden;
+   position: fixed; /* IE display none causes size to be 0 */
+}
+#theimg3 {
+    width: 100%;
+    max-width: 500px;
+    margin: 16px 0 8px;
+    display: block;
+}
+.unimpCol {
+    color: #999;
+}
+#inputArea {
+    font-size: 120%;
+}
+.tlabel {
+    display: inline-block;
+    margin-top: 7px;
+}
+#codeTypeSel {
+    font-size: 120%;
+}
+#textEdit {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 120%;
+    border: 1px solid #aaa;
+}
+#textEdit.bad {
+    border: 2px solid red;
+    background: #fff5f5;
+}
+.template {
+    font-size: 90%;
+    color: #666;
+    white-space: pre;
+    overflow-x: auto;
+    margin: 4px 0 8px;
+}
+#rawErr {
+    color: #c00;
+    background: #fee;
+    border: 1px solid #f99;
+    padding: 6px 6px 6px 26px;
+    margin: 6px 0;
+    display: none;
+}
+#rulesNote {
+    display: none;
+    color: #555;
+    background: #f3f6ff;
+    border: 1px solid #c8d4f5;
+    padding: 6px 8px;
+    margin: 6px 0;
+}
+#rawOk {
+    color: #080;
+    margin: 6px 0;
+}
+.options {
+    margin-top: 8px;
+}
+#sheetsPanel {
+    display: none;
+    margin-top: 16px;
+    padding-top: 8px;
+    border-top: 1px solid #ddd;
+}
+#sheetsPanel button {
+    font-size: 110%;
+    padding: 6px 14px;
+    margin: 4px 0;
+    cursor: pointer;
+}
+#sheetsStatus {
+    white-space: pre-wrap;
+    margin-top: 6px;
+}
+.exportBar button {
+    font-size: 110%;
+    padding: 6px 14px;
+    margin-right: 8px;
+    cursor: pointer;
+}
+</style>
+</head>
+<body id="body" onload="start()" >
+<div id="errMsg"></div>
+<div class="layout">
+
+<div class="panel">
+<h2>Nhập theo ô</h2>
+<div id="inputArea">
+<span class="tlabel">Họ</span><br>
+<input id="lastNameEd" type="text" value="Doe" oninput="formatName(true)"><br>
+<span class="tlabel">Tên đệm và tên</span><br>
+<input id="firstNameEd" type="text" value="John" oninput="formatName(true)"><br>
+<span class="unimpCol tlabel">Mã đặt chỗ (PNR)</span><br>
+<input id="bookRefEd" class="unimpCol" type="text" value="XYZ123" maxlength="6" oninput="formatField('bookRef', true)"><br>
+<div id="bcbpFields">
+<span class="tlabel">Sân bay đi (mã IATA)</span><br>
+<input id="fromEd" type="text" value="ZRH" oninput="formatField('from', true)"><br>
+<span class="tlabel">Sân bay đến (mã IATA)</span><br>
+<input id="toEd" type="text" value="SFO" oninput="formatField('to', true)"><br>
+<span class="tlabel">Hãng bay (mã IATA)</span><br>
+<input id="fOpEd" type="text" value="BA" maxlength="2" oninput="formatField('fOp',true)"><br>
+<span class="tlabel">Số hiệu chuyến bay</span><br>
+<input id="fNumEd" type="text" value="1234" oninput="formatField('fNum', true)"><br>
+<span class="tlabel">Ngày bay</span><br>
+<input id="dateEd" type="date" oninput="readDate(true)"><br>
+<span class="unimpCol tlabel">Ngày thứ mấy trong năm</span><br>
+<input id="dayOfYearEd" type="text" class="unimpCol" value="0" oninput="formatDay(true)"><br>
+<span class="tlabel">Hạng ghế</span><br>
+<select id="classSel" onchange="formatClass(true)">
+  <option value="F">Hạng nhất</option>
+  <option value="C">Thương gia</option>
+  <option value="Y">Phổ thông</option>
+</select><br>
+<span class="tlabel">Số ghế</span><br>
+<input id="seatNumEd" type="text" value="35A" oninput="formatSeat(true)"><br>
+<span class="unimpCol tlabel">Số thứ tự check-in</span><br>
+<input id="seqNumEd" class="unimpCol" type="text" value="0001" oninput="formatSeqNum(true)"><br>
+<span class="unimpCol tlabel">Trạng thái hành khách + dữ liệu bổ sung</span><br>
+<input id="tailEd" class="unimpCol" type="text" value="100" oninput="formatTail(true)"><br>
+</div>
+</div>
+</div>
+
+<div class="panel">
+<h2>Nhập Raw data</h2>
+<div class="template" id="bcbpTemplate">Mẫu (60 ký tự bắt buộc, 1 chặng):
+M1DOE/JOHN            EXYZ123 ZRHSFOBA 1234 301Y035A0001 100
+ABNNNNNNNNNNNNNNNNNNNNERRRRRRRFFFTTTOOOSSSSSDDDCGGGGQQQQQPLL
+A mã định dạng (M)  B số chặng (1)  N HỌ/TÊN (20)  E vé điện tử (E)
+R mã đặt chỗ (6 + cách)  F sân bay đi (3)  T sân bay đến (3)  O hãng bay (2 + cách)
+S số hiệu chuyến bay (5)  D ngày trong năm (3)  C hạng ghế  G số ghế (4)
+Q số thứ tự check-in (5)  P trạng thái hành khách  L độ dài dữ liệu thêm (hex)</div>
+<div class="template" id="qrTemplate" style="display: none">Mẫu QR-VJ (check-in):
+I|&lt;mã 6 ký tự&gt;|&lt;HỌ&gt;/&lt;TÊN ĐỆM VÀ TÊN&gt;|VJ
+ví dụ: I|ABC123|NGUYEN/VAN AN|VJ
+Chữ IN HOA không dấu. Nhập ở các ô thì dấu tiếng Việt tự được bỏ.</div>
+<textarea id="textEdit" rows="4" spellcheck="false" oninput="rawChanged()"></textarea>
+<div id="rulesNote">Mẫu PDF417-VJ: đúng 60 ký tự · hãng bay <b>VJ·</b> · số hiệu chuyến bay 4 chữ số + cách (<b>0213·</b>)
+· hạng ghế để trống (<b>·</b>) · số ghế 3 số + 1 chữ (<b>012C</b>) · số thứ tự 4 số + cách (<b>0045·</b>) · đuôi <b>100</b>
+<br>(· là dấu cách)</div>
+<ul id="rawErr"></ul>
+<div id="rawOk">✓ Dữ liệu đúng mẫu</div>
+
+<div class="options">
+<div id="symOptions">
+<span class="unimpCol">Mức sửa lỗi</span>
+<select id="eccSelect" class="unimpCol" onchange="update()">
+  <option value="0">-1</option>
+  <option value="0">0</option>
+  <option value="1">1</option>
+  <option value="2">2</option>
+  <option value="3">3</option>
+</select>
+<br><span class="unimpCol">Kích thước mã</span>
+<input id="symSize" type="number" class="unimpCol" onchange="update()" value="6">
+</div>
+<span class="unimpCol">Loại mã</span>
+<select id="codeTypeSel" class="unimpCol" onchange="typeUpdate()">
+  <option value="1" selected>pdf417</option>
+  <option value="2">PDF417-VJ</option>
+  <option value="3">QR-VJ (check-in)</option>
+</select>
+</div>
+
+<img id="theimg2">
+<canvas id="theimg3"></canvas>
+<div class="exportBar">
+<button type="button" onclick="exportPng()">Xuất ảnh PNG</button>
+<button type="button" onclick="exportSvg()">Xuất SVG</button>
+</div>
+
+<!-- shown only in the Google Sheets sidebar (apps-script/) -->
+<div id="sheetsPanel">
+<h2>Google Trang tính</h2>
+<button type="button" onclick="sheetsInsertCurrent()">Chèn mã này vào ô đang chọn</button>
+<p>Tạo hàng loạt: chọn các ô chứa Raw data (1 cột). Mã theo loại đang chọn ở trên
+được chèn vào cột ngay bên phải.</p>
+<button type="button" onclick="sheetsBatch()">Tạo mã cho vùng đang chọn</button>
+<div id="sheetsStatus"></div>
+</div>
+</div>
+
+</div>
+</body>
+</html>
