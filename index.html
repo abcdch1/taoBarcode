@@ -824,7 +824,7 @@ A mã định dạng (M)  B số chặng (1)  N HỌ/TÊN (20)  E vé điện t�
 R mã đặt chỗ (6 + cách)  F sân bay đi (3)  T sân bay đến (3)  O hãng bay (2 + cách)
 S số hiệu chuyến bay (5)  D ngày trong năm (3)  C hạng ghế  G số ghế (4)
 Q số thứ tự check-in (5)  P trạng thái hành khách  L độ dài dữ liệu thêm (hex)</div>
-<div class="template" id="qrTemplate" style="display: none">Mẫu QR-VJ (check-in):
+<div class="template" id="qrTemplate" style="display: none">Mẫu QR-VJ:
 I|&lt;mã 6 ký tự&gt;|&lt;HỌ&gt;/&lt;TÊN ĐỆM VÀ TÊN&gt;|VJ
 ví dụ: I|ABC123|NGUYEN/VAN AN|VJ
 Chữ IN HOA không dấu. Nhập ở các ô thì dấu tiếng Việt tự được bỏ.</div>
@@ -850,9 +850,9 @@ Chữ IN HOA không dấu. Nhập ở các ô thì dấu tiếng Việt tự đ�
 </div>
 <span class="unimpCol">Loại mã</span>
 <select id="codeTypeSel" class="unimpCol" onchange="typeUpdate()">
-  <option value="1" selected>pdf417</option>
+  <option value="3" selected>QR-VJ</option>
+  <option value="1">pdf417</option>
   <option value="2">PDF417-VJ</option>
-  <option value="3">QR-VJ (check-in)</option>
 </select>
 </div>
 
