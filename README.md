@@ -1,6 +1,6 @@
-# taoBarcode – Tạo mã vạch thẻ lên máy bay
+# taoBarcode – Tạo mã QR
 
-Trang web tạo mã vạch thẻ lên máy bay (boarding pass) theo chuẩn IATA BCBP, dạng mã **PDF417**.
+Trang web tạo mã QR
 Toàn bộ chạy trong trình duyệt, không cần server.
 
 Dự án được phát triển tiếp từ [shooshx/BoardingBarcode](https://github.com/shooshx/BoardingBarcode).
