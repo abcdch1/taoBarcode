@@ -70,9 +70,12 @@ function update(fromRaw)
     var ecc =  parseInt(eccSelect.value)
     var ssize = parseInt(symSize.value)  // if this is 0, ecc is used
     var ctype = codeTypes[codeTypeSel.value]
-    if (ctype.fixed) {
+    if (ctype.fixed || ctype.qr) {
         try {
-            textOut = Pdf417Fixed.svg(unescapeData(textIn), ctype.fixed.cols, ctype.fixed.rows, ctype.fixed.ecc)
+            if (ctype.qr)
+                textOut = QrEncoder.svg(qrVjParts(unescapeData(textIn)), ctype.qr.ecl, ctype.qr)
+            else
+                textOut = Pdf417Fixed.svg(unescapeData(textIn), ctype.fixed.cols, ctype.fixed.rows, ctype.fixed.ecc)
         } catch (e) {
             err(e.message)
             textOut = ''
@@ -104,6 +107,12 @@ function update(fromRaw)
 }
 
 function format() {
+    if (codeTypes[codeTypeSel.value].qr) {
+        textIn = qrVjBuild()
+        showRawErrors([])
+        update()
+        return
+    }
     textIn = "M1" + fields.name + "E" + fields.bookRef + fields.from + fields.to 
              + fields.fOp + fields.fNum + fields.date + fields.cls + fields.seat + fields.seqNum
              + fields.tail
@@ -127,11 +136,17 @@ function padLeft(s, n) {
 
 function formatName(doRun) {
     errclear()
-    if (lastNameEd.value.length > 18) // need space for slash and last name
-        err("Họ dài quá 18 ký tự")
     var v = lastNameEd.value + "/" + firstNameEd.value
-    if (v.length > 20)
-        err("Họ + tên dài quá 20 ký tự")
+    if (codeTypes[codeTypeSel.value].qr) {
+        if (!/^[A-Z ]*$/.test(toAsciiUpper(v.replace('/', ''))))
+            err("Họ tên chỉ gồm chữ cái và dấu cách")
+    }
+    else {
+        if (lastNameEd.value.length > 18) // need space for slash and last name
+            err("Họ dài quá 18 ký tự")
+        if (v.length > 20)
+            err("Họ + tên dài quá 20 ký tự")
+    }
 
     fields.name = upPadRight(v, 20)
     if (doRun)
@@ -329,6 +344,19 @@ function localDateValue(d) {
 }
 
 function rawChanged() {
+    if (codeTypes[codeTypeSel.value].qr) {
+        var q = parseQrVj(textEdit.value)
+        showRawErrors(q.errs)
+        if (q.errs.length == 0) {
+            bookRefEd.value = q.vals.code
+            lastNameEd.value = q.vals.last
+            firstNameEd.value = q.vals.first
+            formatName()
+            formatField('bookRef')
+        }
+        update(true)
+        return
+    }
     var r = parseRaw(textEdit.value)
     showRawErrors(r.errs)
     if (r.errs.length == 0) {
@@ -373,6 +401,8 @@ function rawChanged() {
 
 function exportName(ext) {
     var parts = ['barcode', fromEd.value, toEd.value, fOpEd.value + fNumEd.value, dateEd.value]
+    if (codeTypes[codeTypeSel.value].qr)
+        parts = ['qr', bookRefEd.value, lastNameEd.value]
     return parts.filter(function(p) { return p }).join('_').replace(/[^\w\-]+/g, '') + '.' + ext
 }
 
@@ -410,7 +440,53 @@ var codeTypes = {
     '0': { lib: 0, size: '11' },
     '1': { lib: 1, size: '6' },
     // Vietjet: always 8 columns x 8 rows, ECC level 2, truncated (measured from real boarding passes)
-    '2': { fixed: { cols: 8, rows: 8, ecc: 2 }, size: '8', rules: VJ_RULES }
+    '2': { fixed: { cols: 8, rows: 8, ecc: 2 }, size: '8', rules: VJ_RULES },
+    // Vietjet check-in QR: I|<code>|<LAST>/<MIDDLE FIRST>|VJ, ECC H (measured from a real one)
+    '3': { qr: { ecl: 'H', unmaskedRemainder: true }, size: '' }
+}
+
+// ---------------- QR-VJ ----------------
+
+// uppercase without Vietnamese diacritics: "Nguyễn Văn Đức" -> "NGUYEN VAN DUC"
+function toAsciiUpper(s) {
+    return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'D').toUpperCase()
+}
+
+function qrVjBuild() {
+    return 'I|' + bookRefEd.value.toUpperCase() + '|' + toAsciiUpper(lastNameEd.value.trim()) + '/'
+         + toAsciiUpper(firstNameEd.value.trim()) + '|VJ'
+}
+
+// the app encodes each piece as its own QR segment: "I", "|<code>|", "<name>", "|VJ"
+function qrVjParts(s) {
+    var p = s.split('|'), out = []
+    p.forEach(function(x, i) {
+        out.push(i % 2 ? '|' + x + (i < p.length - 1 ? '|' : '') : x)
+    })
+    return out
+}
+
+function parseQrVj(s) {
+    var errs = [], p = s.split('|')
+    if (p.length != 4)
+        return { errs: ['Phải có đúng 4 phần ngăn cách bởi "|": I|<mã 6 ký tự>|<HỌ>/<TÊN ĐỆM VÀ TÊN>|VJ (hiện có '
+                        + p.length + ' phần)'] }
+    if (p[0] != 'I')
+        errs.push('Phần 1: "' + p[0] + '" không hợp lệ (phải là I)')
+    if (!/^[A-Z0-9]{6}$/.test(p[1]))
+        errs.push('Phần 2 – Mã: "' + p[1] + '" không hợp lệ (đúng 6 ký tự chữ IN HOA/số)')
+    var nm = p[2].split('/')
+    if (nm.length != 2)
+        errs.push('Phần 3 – Họ tên: "' + p[2] + '" không hợp lệ (dạng HỌ/TÊN ĐỆM VÀ TÊN, có đúng 1 dấu "/")')
+    else {
+        if (!/^[A-Z]+( [A-Z]+)*$/.test(nm[0]))
+            errs.push('Họ: "' + nm[0] + '" không hợp lệ (chữ IN HOA không dấu)')
+        if (!/^[A-Z]+( [A-Z]+)*$/.test(nm[1]))
+            errs.push('Tên đệm và tên: "' + nm[1] + '" không hợp lệ (chữ IN HOA không dấu, cách nhau 1 dấu cách)')
+    }
+    if (p[3] != 'VJ')
+        errs.push('Phần 4: "' + p[3] + '" không hợp lệ (phải là VJ)')
+    return { errs: errs, vals: { code: p[1], last: nm[0], first: nm[1] } }
 }
 
 function activeRules() {
@@ -461,19 +537,26 @@ function unescapeData(s) {
     return s.replace(/\\([0EabtnvfreGR\\])/g, function(m, c) { return ESCAPES[c] })
 }
 
-var savedEcc = 0
+var savedEcc = 0, prevType = null
 function typeUpdate() {
     var ctype = codeTypes[codeTypeSel.value]
+    var prev = codeTypes[prevType] || {}
+    prevType = codeTypeSel.value
+    var locked = !!(ctype.fixed || ctype.qr)
     symSize.value = ctype.size
-    if (ctype.fixed && !eccSelect.disabled) {
+    if (locked && !eccSelect.disabled)
         savedEcc = eccSelect.selectedIndex
-        eccSelect.value = '' + ctype.fixed.ecc
-    }
-    else if (!ctype.fixed && eccSelect.disabled)
+    else if (!locked && eccSelect.disabled)
         eccSelect.selectedIndex = savedEcc
-    eccSelect.disabled = symSize.disabled = !!ctype.fixed
-    if (ctype.rules || classSel.disabled)  // entering or leaving a template with rules
+    if (ctype.fixed)
+        eccSelect.value = '' + ctype.fixed.ecc
+    eccSelect.disabled = symSize.disabled = locked
+    bcbpFields.style.display = bcbpTemplate.style.display = symOptions.style.display = ctype.qr ? 'none' : ''
+    qrTemplate.style.display = ctype.qr ? 'block' : 'none'
+    if (ctype.rules || prev.rules)  // entering or leaving a template with rules
         applyTemplateRules()
+    else if (ctype.qr || prev.qr)   // the raw data has another format
+        format()
     else
         update()
 }
@@ -481,6 +564,7 @@ function typeUpdate() {
 </script>
 <script src="js_qr_brd.js"></script>
 <script src="pdf417_fixed.js"></script>
+<script src="qr_encoder.js"></script>
 <style>
 body, input, textarea, select, button {
     font-family: monospace;
@@ -607,12 +691,13 @@ input, #classSel {
 <div class="panel">
 <h2>Nhập theo ô</h2>
 <div id="inputArea">
-<span class="tlabel">Tên</span><br>
-<input id="firstNameEd" type="text" value="John" oninput="formatName(true)"><br>
 <span class="tlabel">Họ</span><br>
 <input id="lastNameEd" type="text" value="Doe" oninput="formatName(true)"><br>
+<span class="tlabel">Tên đệm và tên</span><br>
+<input id="firstNameEd" type="text" value="John" oninput="formatName(true)"><br>
 <span class="unimpCol tlabel">Mã đặt chỗ (PNR)</span><br>
 <input id="bookRefEd" class="unimpCol" type="text" value="XYZ123" maxlength="6" oninput="formatField('bookRef', true)"><br>
+<div id="bcbpFields">
 <span class="tlabel">Sân bay đi (mã IATA)</span><br>
 <input id="fromEd" type="text" value="ZRH" oninput="formatField('from', true)"><br>
 <span class="tlabel">Sân bay đến (mã IATA)</span><br>
@@ -639,16 +724,21 @@ input, #classSel {
 <input id="tailEd" class="unimpCol" type="text" value="100" oninput="formatTail(true)"><br>
 </div>
 </div>
+</div>
 
 <div class="panel">
 <h2>Nhập Raw data</h2>
-<div class="template">Mẫu (60 ký tự bắt buộc, 1 chặng):
+<div class="template" id="bcbpTemplate">Mẫu (60 ký tự bắt buộc, 1 chặng):
 M1DOE/JOHN            EXYZ123 ZRHSFOBA 1234 301Y035A0001 100
 ABNNNNNNNNNNNNNNNNNNNNERRRRRRRFFFTTTOOOSSSSSDDDCGGGGQQQQQPLL
 A mã định dạng (M)  B số chặng (1)  N HỌ/TÊN (20)  E vé điện tử (E)
 R mã đặt chỗ (6 + cách)  F sân bay đi (3)  T sân bay đến (3)  O hãng bay (2 + cách)
 S số hiệu chuyến bay (5)  D ngày trong năm (3)  C hạng ghế  G số ghế (4)
 Q số thứ tự check-in (5)  P trạng thái hành khách  L độ dài dữ liệu thêm (hex)</div>
+<div class="template" id="qrTemplate" style="display: none">Mẫu QR-VJ (check-in):
+I|&lt;mã 6 ký tự&gt;|&lt;HỌ&gt;/&lt;TÊN ĐỆM VÀ TÊN&gt;|VJ
+ví dụ: I|ABC123|NGUYEN/VAN AN|VJ
+Chữ IN HOA không dấu. Nhập ở các ô thì dấu tiếng Việt tự được bỏ.</div>
 <textarea id="textEdit" rows="4" spellcheck="false" oninput="rawChanged()"></textarea>
 <div id="rulesNote">Mẫu PDF417-VJ: đúng 60 ký tự · hãng bay <b>VJ·</b> · số hiệu chuyến bay 4 chữ số + cách (<b>0213·</b>)
 · hạng ghế để trống (<b>·</b>) · số ghế 3 số + 1 chữ (<b>012C</b>) · số thứ tự 4 số + cách (<b>0045·</b>) · đuôi <b>100</b>
@@ -657,6 +747,7 @@ Q số thứ tự check-in (5)  P trạng thái hành khách  L độ dài dữ 
 <div id="rawOk">✓ Dữ liệu đúng mẫu</div>
 
 <div class="options">
+<div id="symOptions">
 <span class="unimpCol">Mức sửa lỗi</span>
 <select id="eccSelect" class="unimpCol" onchange="update()">
   <option value="0">-1</option>
@@ -667,11 +758,13 @@ Q số thứ tự check-in (5)  P trạng thái hành khách  L độ dài dữ 
 </select>
 <br><span class="unimpCol">Kích thước mã</span>
 <input id="symSize" type="number" class="unimpCol" onchange="update()" value="6">
-<br><span class="unimpCol">Loại mã</span>
+</div>
+<span class="unimpCol">Loại mã</span>
 <select id="codeTypeSel" class="unimpCol" onchange="typeUpdate()">
   <option value="0">aztec</option>
   <option value="1" selected>pdf417</option>
   <option value="2">PDF417-VJ</option>
+  <option value="3">QR-VJ (check-in)</option>
 </select>
 </div>
 
