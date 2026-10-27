@@ -2,7 +2,7 @@
 <html><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Boarding-Pass Barcode Aztec QR Generator</title>
+<title>Tạo mã vạch thẻ lên máy bay</title>
 <script>
   (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
   (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
@@ -45,6 +45,7 @@ function start()
     formatClass()
     formatSeat()
     formatSeqNum()
+    formatTail()
     format()
 }
 
@@ -93,8 +94,9 @@ function update(fromRaw)
 function format() {
     textIn = "M1" + fields.name + "E" + fields.bookRef + fields.from + fields.to 
              + fields.fOp + fields.fNum + fields.date + fields.cls + fields.seat + fields.seqNum
-             + "1" + "00"
-             // 1 passenger status, 00 - hex length of following data
+             + fields.tail
+             // tail: passenger status (1) + hex length of following data (2) + conditional data
+    showRawErrors([])
     update()
 }
 function upPadRight(s, n) {
@@ -114,10 +116,10 @@ function padLeft(s, n) {
 function formatName(doRun) {
     errclear()
     if (lastNameEd.value.length > 18) // need space for slash and last name
-        err("first name longer than 18 charcters")
+        err("Họ dài quá 18 ký tự")
     var v = lastNameEd.value + "/" + firstNameEd.value
     if (v.length > 20)
-        err("first+last name longer than 20 characters")
+        err("Họ + tên dài quá 20 ký tự")
 
     fields.name = upPadRight(v, 20)
     if (doRun)
@@ -125,19 +127,21 @@ function formatName(doRun) {
 }
 
 var fldDef = {
-    'bookRef': { pad: 7, desc:"Booking Ref"},
-    'from':    { pad: 3, desc:"From"},
-    'to':      { pad: 3, desc:"To"},
-    'fOp':     { pad: 3, desc:"Flight Operator"},
-    'fNum':    { pad: 5, desc:"Flight Number"}
+    'bookRef': { pad: 7, exact: 6, desc:"Mã đặt chỗ"},
+    'from':    { pad: 3, desc:"Sân bay đi"},
+    'to':      { pad: 3, desc:"Sân bay đến"},
+    'fOp':     { pad: 3, exact: 2, desc:"Hãng bay"},
+    'fNum':    { pad: 5, desc:"Số hiệu chuyến bay"}
 }
 
 function formatField(name, doRun) {
     errclear('')
     var def = fldDef[name]
     var v = document.getElementById(name + "Ed").value
-    if (v.length > def.pad)
-        err('"' + def.desc + '" longer than ' + def.pad + " chars")
+    if (def.exact && v.length != def.exact)
+        err('"' + def.desc + '" phải có đúng ' + def.exact + " ký tự")
+    else if (v.length > def.pad)
+        err('"' + def.desc + '" dài quá ' + def.pad + " ký tự")
     fields[name] = upPadRight(v, def.pad)
     if (doRun)
         format()
@@ -182,7 +186,7 @@ function formatSeat(doRun) {
     errclear()
     var n = seatNumEd.value
     if (n.length > 4)
-        err("Seat longer than 4 chars")
+        err("Số ghế dài quá 4 ký tự")
     fields.seat = padLeft(n, 4)
     if (doRun)
         format()
@@ -191,11 +195,163 @@ function formatSeqNum(doRun) {
     errclear()
     var n = seqNumEd.value
     if (n.length > 4)
-        err("Seat longer than 4 chars")    
+        err("Số thứ tự check-in dài quá 4 ký tự")
     fields.seqNum = upPadRight(padLeft(n, 4), 5)
     if (doRun)
         format()
 }    
+
+function formatTail(doRun) {
+    errclear()
+    var v = tailEd.value.toUpperCase()
+    if (v.length < 3)
+        err("Trạng thái + dữ liệu bổ sung phải có ít nhất 3 ký tự (ví dụ 100)")
+    fields.tail = upPadRight(v, Math.max(v.length, 3))
+    if (doRun)
+        format()
+}
+
+// ---------------- Raw data -> fields ----------------
+
+// mandatory part of a single-leg BCBP string (IATA Res.792), 60 chars
+var rawDef = [
+    { start: 0,  len: 1,  desc: "Mã định dạng",         re: /^M$/,                       hint: "phải là M" },
+    { start: 1,  len: 1,  desc: "Số chặng bay",          re: /^1$/,                       hint: "chỉ hỗ trợ 1 chặng" },
+    { start: 2,  len: 20, desc: "Tên hành khách",        re: /^[A-Z0-9\/ \-.']{20}$/,     hint: "chữ IN HOA, dạng HỌ/TÊN", name: 'name' },
+    { start: 22, len: 1,  desc: "Chỉ báo vé điện tử",    re: /^E$/,                       hint: "phải là E" },
+    { start: 23, len: 7,  desc: "Mã đặt chỗ",            re: /^[A-Z0-9]{6} $/,            hint: "đúng 6 ký tự IN HOA/số + 1 dấu cách", name: 'bookRef' },
+    { start: 30, len: 3,  desc: "Sân bay đi",            re: /^[A-Z]{3}$/,                hint: "3 chữ cái IN HOA", name: 'from' },
+    { start: 33, len: 3,  desc: "Sân bay đến",           re: /^[A-Z]{3}$/,                hint: "3 chữ cái IN HOA", name: 'to' },
+    { start: 36, len: 3,  desc: "Hãng bay",              re: /^[A-Z0-9]{2} $/,            hint: "đúng 2 ký tự IN HOA/số + 1 dấu cách", name: 'fOp' },
+    { start: 39, len: 5,  desc: "Số hiệu chuyến bay",        re: /^[0-9A-Z ]{5}$/,            hint: "số + chữ IN HOA", name: 'fNum' },
+    { start: 44, len: 3,  desc: "Ngày trong năm",        re: /^[0-9]{3}$/,                hint: "3 chữ số 001-366", name: 'day' },
+    { start: 47, len: 1,  desc: "Hạng ghế",              re: /^[A-Z]$/,                   hint: "1 chữ cái IN HOA", name: 'cls' },
+    { start: 48, len: 4,  desc: "Số ghế",                re: /^[0-9A-Z ]{4}$/,            hint: "ví dụ 035A", name: 'seat' },
+    { start: 52, len: 5,  desc: "Số thứ tự check-in",        re: /^[0-9A-Z ]{5}$/,            hint: "ví dụ 0001 ", name: 'seqNum' },
+    { start: 57, len: 1,  desc: "Trạng thái hành khách",      re: /^[0-9A-Z]$/,                hint: "1 ký tự" },
+    { start: 58, len: 2,  desc: "Độ dài dữ liệu thêm",   re: /^[0-9A-F]{2}$/,             hint: "2 chữ số hex" }
+]
+var RAW_MIN_LEN = 60
+
+function parseRaw(s) {
+    var errs = [], vals = {}
+    if (s.length < RAW_MIN_LEN) {
+        errs.push("Dữ liệu phải dài ít nhất " + RAW_MIN_LEN + " ký tự (hiện có " + s.length + ")")
+        return { errs: errs }
+    }
+    rawDef.forEach(function(d) {
+        var v = s.substr(d.start, d.len)
+        if (!d.re.test(v))
+            errs.push("Vị trí " + (d.start + 1) + (d.len > 1 ? "-" + (d.start + d.len) : "") + " – " + d.desc
+                      + ': "' + v.replace(/ /g, '·') + '" không hợp lệ (' + d.hint + ")")
+        if (d.name)
+            vals[d.name] = v
+    })
+    if (errs.length == 0) {
+        if (vals.name.trim() == '')
+            errs.push("Tên hành khách đang để trống")
+        if (vals.fNum.trim() == '')
+            errs.push("Số hiệu chuyến bay đang để trống")
+        var day = parseInt(vals.day, 10)
+        if (day < 1 || day > 366)
+            errs.push("Ngày trong năm phải trong khoảng 001-366 (hiện là " + vals.day + ")")
+        var varLen = parseInt(s.substr(58, 2), 16), haveLen = s.length - RAW_MIN_LEN
+        if (haveLen < varLen)
+            errs.push("Độ dài dữ liệu thêm khai báo là " + varLen + " ký tự nhưng chỉ có " + haveLen)
+    }
+    vals.tail = s.substr(57)
+    return { errs: errs, vals: vals }
+}
+
+function showRawErrors(errs) {
+    rawErr.innerHTML = ''
+    errs.forEach(function(e) {
+        var li = document.createElement('li')
+        li.textContent = e
+        rawErr.appendChild(li)
+    })
+    rawErr.style.display = errs.length ? 'block' : 'none'
+    rawOk.style.display = errs.length ? 'none' : 'block'
+    textEdit.classList.toggle('bad', errs.length > 0)
+}
+
+function localDateValue(d) {
+    return d.getFullYear() + '-' + padLeft('' + (d.getMonth() + 1), 2) + '-' + padLeft('' + d.getDate(), 2)
+}
+
+function rawChanged() {
+    var r = parseRaw(textEdit.value)
+    showRawErrors(r.errs)
+    if (r.errs.length == 0) {
+        var v = r.vals
+        var nm = v.name.trim().split('/')
+        lastNameEd.value = nm[0]
+        firstNameEd.value = nm.slice(1).join('/')
+        bookRefEd.value = v.bookRef.trim()
+        fromEd.value = v.from
+        toEd.value = v.to
+        fOpEd.value = v.fOp.trim()
+        fNumEd.value = v.fNum.trim()
+        var yr = new Date().getFullYear()
+        dateEd.value = localDateValue(new Date(yr, 0, parseInt(v.day, 10)))
+        dayOfYearEd.value = parseInt(v.day, 10)
+        if (!classSel.querySelector('option[value="' + v.cls + '"]')) {
+            var opt = document.createElement('option')
+            opt.value = opt.textContent = v.cls
+            classSel.appendChild(opt)
+        }
+        classSel.value = v.cls
+        seatNumEd.value = v.seat.trim().replace(/^0+(?=.)/, '')
+        seqNumEd.value = v.seqNum.trim()
+        tailEd.value = v.tail
+
+        formatName()
+        formatField('bookRef')
+        formatField('from')
+        formatField('to')
+        formatField('fOp')
+        formatField('fNum')
+        formatDay()
+        formatClass()
+        formatSeat()
+        formatSeqNum()
+        formatTail()
+    }
+    update(true)  // the barcode always shows exactly what is in the raw box
+}
+
+// ---------------- Export ----------------
+
+function exportName(ext) {
+    var parts = ['barcode', fromEd.value, toEd.value, fOpEd.value + fNumEd.value, dateEd.value]
+    return parts.filter(function(p) { return p }).join('_').replace(/[^\w\-]+/g, '') + '.' + ext
+}
+
+function download(blob, name) {
+    var a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(function() { URL.revokeObjectURL(a.href) }, 1000)
+}
+
+function exportPng() {
+    if (!theimg3.width) {
+        err("Chưa có mã vạch để xuất")
+        return
+    }
+    theimg3.toBlob(function(b) { download(b, exportName('png')) }, 'image/png')
+}
+
+function exportSvg() {
+    if (!textOut) {
+        err("Chưa có mã vạch để xuất")
+        return
+    }
+    download(new Blob([textOut], {type: "image/svg+xml"}), exportName('svg'))
+}
 
 function typeUpdate() {
     if (codeTypeSel.value == "0")
@@ -208,15 +364,19 @@ function typeUpdate() {
 </script>
 <script src="js_qr_brd.js"></script>
 <style>
-#textEdit {
-    width: 100%;
-    max-width: 500px;
-}
-body, input {
+body, input, textarea, select, button {
     font-family: monospace;
+}
+body {
+    margin: 0;
+    padding: 12px 16px;
+    background: #fff;
+    color: #222;
 }
 input, #classSel {
     font-size: 130%;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 #errMsg {
     position: fixed;
@@ -231,25 +391,38 @@ input, #classSel {
     border: red solid 1px;
     visibility: hidden;
     max-width: 500px;
+    z-index: 10;
 }
-#theimg {
-    margin: 5px;
-    max-width: 500px;
-    margin: 20px 0 420px 0;    
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: 24px;
+    align-items: start;
+}
+@media (max-width: 800px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+}
+.panel {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px 16px 16px;
+}
+.panel h2 {
+    font-size: 120%;
+    margin: 0 0 6px;
 }
 #theimg2 {
-   /*display: none;*/
    visibility: hidden;
    position: fixed; /* IE display none causes size to be 0 */
 }
 #theimg3 {
     width: 100%;
-    margin: 5px;
     max-width: 500px;
-    margin: 20px 0 420px 0;    
+    margin: 16px 0 8px;
+    display: block;
 }
 .unimpCol {
-    color: #bbb;
+    color: #999;
 }
 #inputArea {
     font-size: 120%;
@@ -261,45 +434,101 @@ input, #classSel {
 #codeTypeSel {
     font-size: 120%;
 }
-
+#textEdit {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 120%;
+    border: 1px solid #aaa;
+}
+#textEdit.bad {
+    border: 2px solid red;
+    background: #fff5f5;
+}
+.template {
+    font-size: 90%;
+    color: #666;
+    white-space: pre;
+    overflow-x: auto;
+    margin: 4px 0 8px;
+}
+#rawErr {
+    color: #c00;
+    background: #fee;
+    border: 1px solid #f99;
+    padding: 6px 6px 6px 26px;
+    margin: 6px 0;
+    display: none;
+}
+#rawOk {
+    color: #080;
+    margin: 6px 0;
+}
+.options {
+    margin-top: 8px;
+}
+.exportBar button {
+    font-size: 110%;
+    padding: 6px 14px;
+    margin-right: 8px;
+    cursor: pointer;
+}
 </style>
 </head>
 <body id="body" onload="start()" >
 <div id="errMsg"></div>
+<div class="layout">
+
+<div class="panel">
+<h2>Nhập theo ô</h2>
 <div id="inputArea">
-<span class="tlabel">First Name</span><br>
+<span class="tlabel">Tên</span><br>
 <input id="firstNameEd" type="text" value="John" oninput="formatName(true)"><br>
-<span class="tlabel">Last Name</span><br>
+<span class="tlabel">Họ</span><br>
 <input id="lastNameEd" type="text" value="Doe" oninput="formatName(true)"><br>
-<span class="unimpCol tlabel">Booking-Ref</span><br>
-<input id="bookRefEd" class="unimpCol" type="text" value="XYZ123" oninput="formatField('bookRef', true)"><br>
-<span class="tlabel">From</span><br>
+<span class="unimpCol tlabel">Mã đặt chỗ (PNR)</span><br>
+<input id="bookRefEd" class="unimpCol" type="text" value="XYZ123" maxlength="6" oninput="formatField('bookRef', true)"><br>
+<span class="tlabel">Sân bay đi (mã IATA)</span><br>
 <input id="fromEd" type="text" value="ZRH" oninput="formatField('from', true)"><br>
-<span class="tlabel">To</span><br>
+<span class="tlabel">Sân bay đến (mã IATA)</span><br>
 <input id="toEd" type="text" value="SFO" oninput="formatField('to', true)"><br>
-<span class="tlabel">Flight Operator</span><br>
-<input id="fOpEd" type="text" value="BA" oninput="formatField('fOp',true)"><br>
-<span class="tlabel">Flight Number</span><br>
+<span class="tlabel">Hãng bay (mã IATA)</span><br>
+<input id="fOpEd" type="text" value="BA" maxlength="2" oninput="formatField('fOp',true)"><br>
+<span class="tlabel">Số hiệu chuyến bay</span><br>
 <input id="fNumEd" type="text" value="1234" oninput="formatField('fNum', true)"><br>
-<span class="tlabel">Date</span><br>
+<span class="tlabel">Ngày bay</span><br>
 <input id="dateEd" type="date" oninput="readDate(true)"><br>
-<span class="unimpCol tlabel">Day in year</span><br>
+<span class="unimpCol tlabel">Ngày thứ mấy trong năm</span><br>
 <input id="dayOfYearEd" type="text" class="unimpCol" value="0" oninput="formatDay(true)"><br>
-<span class="tlabel">Class</span><br>
+<span class="tlabel">Hạng ghế</span><br>
 <select id="classSel" onchange="formatClass(true)">
-  <option value="F">First</option>
-  <option value="C">Business</option>
-  <option value="Y">Economy</option>
+  <option value="F">Hạng nhất</option>
+  <option value="C">Thương gia</option>
+  <option value="Y">Phổ thông</option>
 </select><br>
-<span class="tlabel">Seat</span><br>
+<span class="tlabel">Số ghế</span><br>
 <input id="seatNumEd" type="text" value="35A" oninput="formatSeat(true)"><br>
-<span class="unimpCol tlabel">Boarding Index</span><br>
+<span class="unimpCol tlabel">Số thứ tự check-in</span><br>
 <input id="seqNumEd" class="unimpCol" type="text" value="0001" oninput="formatSeqNum(true)"><br>
+<span class="unimpCol tlabel">Trạng thái hành khách + dữ liệu bổ sung</span><br>
+<input id="tailEd" class="unimpCol" type="text" value="100" oninput="formatTail(true)"><br>
 </div>
-<span class="unimpCol">Raw Data:</span><br>
-<textarea id="textEdit" rows="4" cols="50" class="unimpCol" oninput="update(true)">
-hello</textarea>
-<br><span class="unimpCol">Error-Correction</span>
+</div>
+
+<div class="panel">
+<h2>Nhập Raw data</h2>
+<div class="template">Mẫu (60 ký tự bắt buộc, 1 chặng):
+M1DOE/JOHN            EXYZ123 ZRHSFOBA 1234 301Y035A0001 100
+ABNNNNNNNNNNNNNNNNNNNNERRRRRRRFFFTTTOOOSSSSSDDDCGGGGQQQQQPLL
+A mã định dạng (M)  B số chặng (1)  N HỌ/TÊN (20)  E vé điện tử (E)
+R mã đặt chỗ (6 + cách)  F sân bay đi (3)  T sân bay đến (3)  O hãng bay (2 + cách)
+S số hiệu chuyến bay (5)  D ngày trong năm (3)  C hạng ghế  G số ghế (4)
+Q số thứ tự check-in (5)  P trạng thái hành khách  L độ dài dữ liệu thêm (hex)</div>
+<textarea id="textEdit" rows="4" spellcheck="false" oninput="rawChanged()"></textarea>
+<ul id="rawErr"></ul>
+<div id="rawOk">✓ Dữ liệu đúng mẫu</div>
+
+<div class="options">
+<span class="unimpCol">Mức sửa lỗi</span>
 <select id="eccSelect" class="unimpCol" onchange="update()">
   <option value="0">-1</option>
   <option value="0">0</option>
@@ -307,16 +536,23 @@ hello</textarea>
   <option value="2">2</option>
   <option value="3">3</option>
 </select>
-<br><span class="unimpCol">Symbol-Size</span>
+<br><span class="unimpCol">Kích thước mã</span>
 <input id="symSize" type="number" class="unimpCol" onchange="update()" value="11">
-<br><select id="codeTypeSel" class="unimpCol" onchange="typeUpdate()">
+<br><span class="unimpCol">Loại mã</span>
+<select id="codeTypeSel" class="unimpCol" onchange="typeUpdate()">
   <option value="0">aztec</option>
   <option value="1">pdf417</option>
 </select>
+</div>
 
-<br><br>
-<!-- <div id="theimg"></div> -->
- <img id="theimg2">   
- <canvas id="theimg3"></canvas>
+<img id="theimg2">
+<canvas id="theimg3"></canvas>
+<div class="exportBar">
+<button type="button" onclick="exportPng()">Xuất ảnh PNG</button>
+<button type="button" onclick="exportSvg()">Xuất SVG</button>
+</div>
+</div>
+
+</div>
 </body>
 </html>
